@@ -3,9 +3,14 @@
 ;;;; A wrapper to compile mybot.lisp and ants.lisp into MyBot.
 
 ;; This seems to work for now.
+
+;; :release:
 (declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+
 ;(declaim (sb-ext:muffle-conditions style-warning))  ; doesn't work
 ;(declaim (sb-ext:muffle-conditions warning))        ; idem
+
+;; :release:
 (setf sb-ext:*muffled-warnings* 'style-warning)
 
 (load "main.lisp")

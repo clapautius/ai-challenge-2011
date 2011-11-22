@@ -119,7 +119,9 @@
                   (setf (slot-value *state* 'view-radius2) (par-value line)))))
   (setf (slot-value *state* 'game-map)
         (make-array (list (rows *state*) (cols *state*)) :element-type 'fixnum
-                    :initial-element 0)))
+                    :initial-element 0))
+  (init-internal-data (rows *state*) (cols *state*)))
+
 
 ;; TODO is this the right thing to do?
 (defun reset-game-map ()
@@ -257,3 +259,84 @@
   (declare (ignore arg))
   (format *debug-io* "~&User interrupt. Aborting...~%")
   (quit))
+
+
+
+;;; intelligent code
+
+(defclass ant ()
+  ((x :accessor x :initarg x :initform (error "Must specify x"))
+   (y :accessor y :initarg y :initform (error "Must specify y"))))
+
+
+(defvar *internal-state* nil)
+(defvar *cur-turn* 1)
+(defvar *log-output* nil)
+
+
+(defun init-internal-data (rows cols)
+  "Init internal data."
+  (setf *internal-state*
+        (make-array (list rows cols) :element-type 'fixnum :initial-element 0)))
+
+
+(defun do-ant (r c)
+  "Do something with ant at coord. (r, c)."
+  (let ((dir (move-explore r c)))
+    (when dir
+      (when *log-output*
+        (format *log-output* "cmd ~a from (~a,~a), internal-state at dest: ~a~%"
+                dir r c *cur-turn*))
+      (issue-order r c dir)
+      (set-value-at *internal-state* r c dir *cur-turn*))))
+
+
+(defun value-at (array r c dir)
+  "..."
+  (let ((nl (new-location r c dir)))
+    (aref array (first nl) (second nl))))
+
+
+(defun set-value-at (array r c dir value)
+  "..."
+  (let ((nl (new-location r c dir)))
+    (setf (aref array (first nl) (second nl)) value)))
+
+
+(defun move-acceptable-p (r c dir)
+  "Return true if the move is acceptable"
+  (and (not (waterp r c dir))
+       (/= (value-at *internal-state* r c dir) *cur-turn*)))
+  
+
+(defun move-explore (r c)
+  "Select a cell that was not visited before or was visited a long time ago"
+  (when *log-output*
+    (format *log-output* "explore from (~a, ~a), *cur-turn*=~a~%"
+            r c *cur-turn*)
+    (format *log-output* "north: ~a, south: ~a, east: ~a west: ~a~%"
+            (value-at *internal-state* r c :north)
+            (value-at *internal-state* r c :south)
+            (value-at *internal-state* r c :east)
+            (value-at *internal-state* r c :west)))
+  (let ((min *cur-turn*)
+        (dir nil))
+    (when (and (move-acceptable-p r c :north)
+               (< (value-at *internal-state* r c :north) min))
+      (setf dir :north)
+      (setf min (value-at *internal-state* r c :north)))
+    (when (and (move-acceptable-p r c :west)
+               (< (value-at *internal-state* r c :west) min))
+      (setf dir :west)
+      (setf min (value-at *internal-state* r c :west)))
+    (when (and (move-acceptable-p r c :south)
+               (< (value-at *internal-state* r c :south) min))
+      (setf dir :south)
+      (setf min (value-at *internal-state* r c :south)))
+    (when (and (move-acceptable-p r c :east)
+               (< (value-at *internal-state* r c :east) min))
+      (setf dir :east)
+      (setf min (value-at *internal-state* r c :east)))
+    (when *log-output*
+      (format *log-output* "best direction is ~a~%" dir))
+    dir))
