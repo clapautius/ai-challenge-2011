@@ -23,6 +23,10 @@
 
 (defvar *state* (make-instance 'state))
 
+(defvar *internal-state* nil)
+(defvar *cur-turn* 1)
+(defvar *log-output* nil)
+
 ;;; Functions
 
 (defun distance (row1 col1 row2 col2)
@@ -217,7 +221,7 @@
 
 ;; TODO detect the razing of hills
 (defun set-hill (string)
-  "Parses the \"a row col owner\" STRING and sets the specific map tile to
+  "Parses the \"h row col owner\" STRING and sets the specific map tile to
   a hill of owner.  Modifies (HILLS *STATE*) and (GAME-MAP *STATE*)."
   (let* ((split (split-state-string string))
          (row (parse-integer (elt split 1)))
@@ -240,7 +244,11 @@
                  ((starts-with line "w ") (set-water line))
                  ((starts-with line "a ") (set-ant line))
                  ((starts-with line "d ") (set-dead line))
-                 ((starts-with line "h ") (set-hill line)))))
+                 ((starts-with line "h ") (set-hill line))))
+  ;; print turn data
+  (when *log-output*
+    (format *log-output* "hills for current turn: ~a~%" (hills *state*))))
+
 
 (defun reset-some-state ()
   "Sets (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and (FOOD *STATE*) to NIL."
@@ -296,10 +304,6 @@
    (y :accessor y :initarg y :initform (error "Must specify y"))))
 
 
-(defvar *internal-state* nil)
-(defvar *cur-turn* 1)
-(defvar *log-output* nil)
-
 
 (defun init-internal-data (rows cols)
   "Init internal data."
@@ -313,9 +317,10 @@ better)."
   (let* ((e (get-entity-at r c))
          (p (cond
               ((= e 1) (1- *cur-turn*)) ; water
-              ((>= e 300) (1+ *cur-turn*)) ; hill :fixme: - check if correct
+              ((own-hill-p r c) (* 2 *cur-turn*)) ; own hill
+              ((enemy-hill-p r c) (- *cur-turn*)) ; enemy hill - destroy
               ((= e 200) (1+ *cur-turn*)) ; enemy ant - run, forrest, run
-              ;((= e 100) 0) ; own ant
+              ;((= e 100) (1+ *cur-turn*)) ; own ant
               ((= e 2) (- *cur-turn*)) ; food
               (t (aref *internal-state* r c)))))
     (when *log-output*
@@ -349,26 +354,55 @@ Returns a list with results."
       (when *log-output*
         (format *log-output* "cmd ~a from (~a,~a), internal-state at dest: ~a~%"
                 dir r c *cur-turn*))
-      (issue-order r c dir)
-      (set-value-at *internal-state* r c dir *cur-turn*))))
+      (issue-order r c dir))
+    (set-value-at *internal-state* r c dir *cur-turn*)))
 
 
-(defun value-at (array r c dir)
+(defun value-at (array row col dir)
   "..."
-  (let ((nl (new-location r c dir)))
+  (let ((nl (new-location row col dir)))
     (aref array (first nl) (second nl))))
 
 
-(defun set-value-at (array r c dir value)
+(defun set-value-at (array row col dir value)
+  "dir may be nil"
+  (let ((r row) (c col))
+    (when dir
+      (let ((nl (new-location row col dir)))
+        (setf r (first nl))
+        (setf c (second nl))))
+    (setf (aref array r c) value)))
+
+
+(defun own-hill-p (row col &optional dir)
   "..."
-  (let ((nl (new-location r c dir)))
-    (setf (aref array (first nl) (second nl)) value)))
+  (let* ((r row) (c col))
+    (when dir
+      (setf r (new-loc-row row col dir))
+      (setf c (new-loc-col row col dir)))
+    (some (lambda (hill) (and (= r (first hill))
+                              (= c (second hill))
+                              (zerop (third hill))))
+          (hills *state*))))
+
+(defun enemy-hill-p (row col &optional dir)
+  "..."
+  (let* ((r row) (c col))
+    (when dir
+      (setf r (new-loc-row row col dir))
+      (setf c (new-loc-col row col dir)))
+    (some (lambda (hill) (and (= r (first hill))
+                              (= c (second hill))
+                              (plusp (third hill))))
+          (hills *state*))))
 
 
-(defun move-acceptable-p (r c dir)
+(defun move-acceptable-p (row col dir)
   "Return true if the move is acceptable"
-  (and (not (waterp r c dir))
-       (/= (value-at *internal-state* r c dir) *cur-turn*)))
+  (let ((ent (get-entity-at row col dir)))
+    (and (/= 1 ent) ; not water
+         (not (own-hill-p row col dir)) ; not own hill
+         (/= (value-at *internal-state* row col dir) *cur-turn*))))
   
 
 (defun move-explore (r c)
@@ -381,37 +415,28 @@ Returns a list with results."
     ;;        (game-map *state*)
     ;;        *internal-state*)
     )
+  (let* ((pref-dir-list nil)
+         (pref-dir (mod (truncate (/ *cur-turn* 64)) 4)))
+    (cond
+      ((= pref-dir 0) (setf pref-dir-list '(:north :east :south :west)))
+      ((= pref-dir 1) (setf pref-dir-list '(:east :south :west :north)))
+      ((= pref-dir 2) (setf pref-dir-list '(:south :west :north :east)))
+      ((= pref-dir 3) (setf pref-dir-list '(:west :north :east :south))))
 
-  (let ((min (* 5 *cur-turn*))
-        (dir nil))
-    (when (move-acceptable-p r c :north)
-      (let ((val (for-each-direction-sum r c :north 'explore-potential t)))
-        (when *log-output*
-          (format *log-output* "potential at north: ~a~%" val))
-        (when (< val min)
-          (setf dir :north)
-          (setf min val))))
-    (when (move-acceptable-p r c :east)
-      (let ((val (for-each-direction-sum r c :east 'explore-potential t)))
-        (when *log-output*
-          (format *log-output* "potential at east: ~a~%" val))
-        (when (< val min)
-          (setf dir :east)
-          (setf min val))))
-    (when (move-acceptable-p r c :south)
-      (let ((val (for-each-direction-sum r c :south 'explore-potential t)))
-        (when *log-output*
-          (format *log-output* "potential at south: ~a~%" val))
-        (when (< val min)
-          (setf dir :south)
-          (setf min val))))
-    (when (move-acceptable-p r c :west)
-      (let ((val (for-each-direction-sum r c :west 'explore-potential t)))
-        (when *log-output*
-          (format *log-output* "potential at west: ~a~%" val))
-        (when (< val min)
-          (setf dir :west)
-          (setf min val))))
     (when *log-output*
-      (format *log-output* "best direction is ~a~%" dir))
-    dir))
+      (format *log-output* "pref-dir=~a, pref-dir-list=~a~%"
+              pref-dir pref-dir-list))
+
+    (let ((min (* 8 *cur-turn*))
+          (dir nil))
+      (dolist (try-dir pref-dir-list)
+        (when (move-acceptable-p r c try-dir)
+          (let ((val (for-each-direction-sum r c try-dir 'explore-potential t)))
+            (when *log-output*
+              (format *log-output* "potential at ~a: ~a~%" try-dir val))
+            (when (< val min)
+              (setf dir try-dir)
+              (setf min val)))))
+      (when *log-output*
+        (format *log-output* "best direction is ~a~%" dir))
+      dir)))
