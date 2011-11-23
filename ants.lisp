@@ -70,11 +70,38 @@
                        (t col))))
     (list dst-row dst-col)))
 
-(defun waterp (row col direction)
+
+;;; :fixme:
+(defun new-loc-row (row col direction)
+  (first (new-location row col direction)))
+(defun new-loc-col (row col direction)
+  (second (new-location row col direction)))
+
+
+(defun waterp (row col &optional (direction nil))
   "Returns T if the tile in the DIRECTION of ROW,COL is water, otherwise
   returns NIL."
-  (let ((nl (new-location row col direction)))
-    (= 1 (aref (game-map *state*) (elt nl 0) (elt nl 1)))))
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (= 1 (aref (game-map *state*) (elt nl 0) (elt nl 1))))
+      (= 1 (aref (game-map *state*) row col))))
+
+
+(defun own-ant-p (row col &optional (direction nil))
+  "Returns T if the tile in the DIRECTION of ROW,COL is own ant, otherwise
+  returns NIL."
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (= 100 (aref (game-map *state*) (elt nl 0) (elt nl 1))))
+      (= 100 (aref (game-map *state*) row col))))
+
+
+(defun get-entity-at (row col &optional (direction nil))
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (aref (game-map *state*) (elt nl 0) (elt nl 1)))
+      (aref (game-map *state*) row col)))
+
 
 ;; maintain WATER? for backwards compatibility
 (setf (symbol-function 'water?) #'waterp)
@@ -280,6 +307,41 @@
         (make-array (list rows cols) :element-type 'fixnum :initial-element 0)))
 
 
+(defun explore-potential (r c)
+  "Return a value representing the explore potential of the cell (small is
+better)."
+  (let* ((e (get-entity-at r c))
+         (p (cond
+              ((= e 1) (1- *cur-turn*)) ; water
+              ((>= e 300) (1+ *cur-turn*)) ; hill :fixme: - check if correct
+              ((= e 200) (1+ *cur-turn*)) ; enemy ant - run, forrest, run
+              ;((= e 100) 0) ; own ant
+              ((= e 2) (- *cur-turn*)) ; food
+              (t (aref *internal-state* r c)))))
+    (when *log-output*
+      (format *log-output* "potential of (~a, ~a)=~a~%"
+              r c p))
+    p))
+
+
+(defun for-each-direction-sum (row col direction func
+                               &optional (incl-current nil))
+  "Call func with r & c params each direction: north, south, east, west. 
+Returns a list with results."
+  (let ((r row) (c col))
+    (when direction
+      (let ((nl (new-location row col direction)))
+        (setf r (first nl))
+        (setf c (second nl))))
+    (+ (funcall func (new-loc-row r c :north) (new-loc-col r c :north))
+       (funcall func (new-loc-row r c :south) (new-loc-col r c :south))
+       (funcall func (new-loc-row r c :east) (new-loc-col r c :east))
+       (funcall func (new-loc-row r c :west) (new-loc-col r c :west))
+       (if incl-current
+           (funcall func r c)
+           0))))
+
+
 (defun do-ant (r c)
   "Do something with ant at coord. (r, c)."
   (let ((dir (move-explore r c)))
@@ -314,29 +376,42 @@
   (when *log-output*
     (format *log-output* "explore from (~a, ~a), *cur-turn*=~a~%"
             r c *cur-turn*)
-    (format *log-output* "north: ~a, south: ~a, east: ~a west: ~a~%"
-            (value-at *internal-state* r c :north)
-            (value-at *internal-state* r c :south)
-            (value-at *internal-state* r c :east)
-            (value-at *internal-state* r c :west)))
-  (let ((min *cur-turn*)
+    ;; :tmp:
+    ;;(format *log-output* "map:~%~a~%internal-state:~%~a~%"
+    ;;        (game-map *state*)
+    ;;        *internal-state*)
+    )
+
+  (let ((min (* 5 *cur-turn*))
         (dir nil))
-    (when (and (move-acceptable-p r c :north)
-               (< (value-at *internal-state* r c :north) min))
-      (setf dir :north)
-      (setf min (value-at *internal-state* r c :north)))
-    (when (and (move-acceptable-p r c :west)
-               (< (value-at *internal-state* r c :west) min))
-      (setf dir :west)
-      (setf min (value-at *internal-state* r c :west)))
-    (when (and (move-acceptable-p r c :south)
-               (< (value-at *internal-state* r c :south) min))
-      (setf dir :south)
-      (setf min (value-at *internal-state* r c :south)))
-    (when (and (move-acceptable-p r c :east)
-               (< (value-at *internal-state* r c :east) min))
-      (setf dir :east)
-      (setf min (value-at *internal-state* r c :east)))
+    (when (move-acceptable-p r c :north)
+      (let ((val (for-each-direction-sum r c :north 'explore-potential t)))
+        (when *log-output*
+          (format *log-output* "potential at north: ~a~%" val))
+        (when (< val min)
+          (setf dir :north)
+          (setf min val))))
+    (when (move-acceptable-p r c :east)
+      (let ((val (for-each-direction-sum r c :east 'explore-potential t)))
+        (when *log-output*
+          (format *log-output* "potential at east: ~a~%" val))
+        (when (< val min)
+          (setf dir :east)
+          (setf min val))))
+    (when (move-acceptable-p r c :south)
+      (let ((val (for-each-direction-sum r c :south 'explore-potential t)))
+        (when *log-output*
+          (format *log-output* "potential at south: ~a~%" val))
+        (when (< val min)
+          (setf dir :south)
+          (setf min val))))
+    (when (move-acceptable-p r c :west)
+      (let ((val (for-each-direction-sum r c :west 'explore-potential t)))
+        (when *log-output*
+          (format *log-output* "potential at west: ~a~%" val))
+        (when (< val min)
+          (setf dir :west)
+          (setf min val))))
     (when *log-output*
       (format *log-output* "best direction is ~a~%" dir))
     dir))

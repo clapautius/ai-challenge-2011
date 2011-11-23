@@ -1,9 +1,9 @@
 ;;;; main.lisp
 
-(load "ants.lisp")
-
-;; release
+;;; :release:
 (defparameter *debug* nil)
+
+(load "ants.lisp")
 
 ;;; Functions
 
