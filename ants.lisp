@@ -1,33 +1,10 @@
-;;;; ants.lisp
+;;;; functions/classes related to ants and maps
 
-;;; State Class
+(defclass ant ()
+  ((row :accessor row :initform nil)
+   (col :accessor col :initform nil)
+   (has-task-p :accessor has-task-p :initform nil)))
 
-(defclass state ()
-  ((rows :reader rows :initform nil)
-   (cols :reader cols :initform nil)
-   (game-map :reader game-map :initform nil)
-   (enemy-ants :reader enemy-ants :initform nil)
-   (my-ants :reader my-ants :initform nil)
-   (food :reader food :initform nil)
-   (hills :reader hills :initform nil)
-   (turn-time :reader turn-time :initform 1000)
-   (load-time :reader load-time :initform 3000)
-   (turn-start-time :reader turn-start-time :initform nil)
-   (view-radius2 :reader view-radius2 :initform 93)
-   (attack-radius2  :reader attack-radius2 :initform 6)
-   (spawn-radius2 :reader spawn-radius2 :initform 6)
-   (turns :reader turns :initform nil)
-   (turn :reader turn :initform nil)))
-
-;;; Globals
-
-(defvar *state* (make-instance 'state))
-
-(defvar *internal-state* nil)
-(defvar *cur-turn* 1)
-(defvar *log-output* nil)
-
-;;; Functions
 
 (defun distance (row1 col1 row2 col2)
   "Returns the shortest distance between ROW1,COL1 and ROW2,COL2 for a grid
@@ -38,17 +15,6 @@
          (mincol (min dcol (- (cols *state*) dcol))))
     (sqrt (+ (* minrow minrow) (* mincol mincol)))))
 
-(defun issue-order (row col direction)
-  "Prints a formatted order for ROW,COL and DIRECTION to standard output.
-  Silently drops orders when DIRECTION isn't one of :north, :east, :south
-  or :west."
-  (when (member direction '(:north :east :south :west))
-    (format *standard-output* "~&o ~D ~D ~A~%" row col
-            (case direction
-              (:north "N")
-              (:east  "E")
-              (:south "S")
-              (:west  "W")))))
 
 ;; TODO needs better docstring (needs better code as well!)
 (defun new-location (row col direction)
@@ -82,6 +48,21 @@
   (second (new-location row col direction)))
 
 
+(defun normalize-loc (row col)
+  "Normalize the row and col to values between 0 and max width / height."
+  (let ((new-row row)
+        (new-col col))
+    (when (minusp row)
+      (setf new-row (- (rows *state*) 1 row)))
+    (when (>= row (rows *state*))
+      (setf new-row (- row (rows *state*))))
+    (when (minusp col)
+      (setf new-col (- (cols *state*) 1 col)))
+    (when (>= col (cols *state*))
+      (setf new-col (- col (cols *state*))))
+    (list new-row new-col)))
+
+
 (defun waterp (row col &optional (direction nil))
   "Returns T if the tile in the DIRECTION of ROW,COL is water, otherwise
   returns NIL."
@@ -94,10 +75,20 @@
 (defun own-ant-p (row col &optional (direction nil))
   "Returns T if the tile in the DIRECTION of ROW,COL is own ant, otherwise
   returns NIL."
-  (if direction
-      (let ((nl (new-location row col direction)))
-        (= 100 (aref (game-map *state*) (elt nl 0) (elt nl 1))))
-      (= 100 (aref (game-map *state*) row col))))
+  (let* ((nl (if direction (new-location row col direction) (list row col)))
+         (r (first nl)) (c (second nl))
+         (elt (aref (game-map *state*) r c)))
+    (or (= 100 elt)
+        (= 101 elt))))
+
+
+(defun own-free-ant-p (row col &optional (direction nil))
+  "Returns T if the tile in the DIRECTION of ROW,COL is own ant and the ant is
+  free, otherwise returns NIL."
+  (let* ((nl (if direction (new-location row col direction) (list row col)))
+         (r (first nl)) (c (second nl))
+         (elt (aref (game-map *state*) r c)))
+    (= 100 elt)))
 
 
 (defun get-entity-at (row col &optional (direction nil))
@@ -106,209 +97,6 @@
         (aref (game-map *state*) (elt nl 0) (elt nl 1)))
       (aref (game-map *state*) row col)))
 
-
-;; maintain WATER? for backwards compatibility
-(setf (symbol-function 'water?) #'waterp)
-
-(defun finish-turn ()
-  "Prints the \"finish turn\" string to standard output."
-  (format *standard-output* "~&go~%")
-  (force-output *standard-output*))
-
-(defun par-value (string)
-  "Helper function for parsing game state input from the server."
-  (parse-integer (subseq string (position #\space string) (length string))))
-
-(defun starts-with (sequence subsequence)
-  (let ((sublen (length subsequence)))
-    (when (and (> sublen 0)
-               (<= sublen (length sequence)))
-      (equal (subseq sequence 0 sublen) subsequence))))
-
-(defun parse-game-parameters ()
-  "Parses turn 0 game parameters and sets them in *STATE*.  Also creates
-  initial game map and assigns it to (GAME-MAP *STATE*)."
-  (loop for line = (read-line *standard-input* nil)
-        until (starts-with line "ready")
-        do (cond ((starts-with line "attackradius2 ")
-                  (setf (slot-value *state* 'attack-radius2) (par-value line)))
-                 ((starts-with line "cols ")
-                  (setf (slot-value *state* 'cols) (par-value line)))
-                 ((starts-with line "loadtime ")
-                  (setf (slot-value *state* 'load-time)
-                        (/ (par-value line) 1000.0)))
-                 ((starts-with line "rows ")
-                  (setf (slot-value *state* 'rows) (par-value line)))
-                 ((starts-with line "spawnradius2 ")
-                  (setf (slot-value *state* 'spawn-radius2) (par-value line)))
-                 ((starts-with line "turns ")
-                  (setf (slot-value *state* 'turns) (par-value line)))
-                 ((starts-with line "turntime ")
-                  (setf (slot-value *state* 'turn-time)
-                        (/ (par-value line) 1000.0)))
-                 ((starts-with line "viewradius2 ")
-                  (setf (slot-value *state* 'view-radius2) (par-value line)))))
-  (setf (slot-value *state* 'game-map)
-        (make-array (list (rows *state*) (cols *state*)) :element-type 'fixnum
-                    :initial-element 0))
-  (init-internal-data (rows *state*) (cols *state*)))
-
-
-;; TODO is this the right thing to do?
-(defun reset-game-map ()
-  "Sets all tiles on the map to land (0) if they're not already land or
-  water (1).  Modifies (GAME-MAP *STATE*)."
-  (loop with game-map = (game-map *state*)
-        with dim = (array-dimensions game-map)
-        for row from 0 below (first dim)
-        do (loop for col from 0 below (second dim)
-                 when (> (aref game-map row col) 1)
-                   do (setf (aref game-map row col) 0))))
-
-;; TODO needs a docstring
-(defun split-state-string (string)
-  (loop with result = nil
-        with value = nil
-        for c across string
-        when (and (char= c #\space) value)
-          do (push (coerce (nreverse value) 'string) result)
-             (setf value nil)
-        when (char/= c #\space)
-          do (push c value)
-        finally (when value
-                  (push (coerce (nreverse value) 'string) result))
-                (return (nreverse result))))
-
-(defun set-ant (string)
-  "Parses the \"a row col owner\" STRING and sets the specific map tile to
-  an ant of owner.  Modifies (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and
-  (GAME-MAP *STATE*)."
-  (let* ((split (split-state-string string))
-         (row (parse-integer (elt split 1)))
-         (col (parse-integer (elt split 2)))
-         (owner (parse-integer (elt split 3))))
-    (if (= owner 0)
-        (push (list row col) (slot-value *state* 'my-ants))
-        (push (list row col owner) (slot-value *state* 'enemy-ants)))
-    (setf (aref (game-map *state*) row col) (+ owner 100))))
-
-(defun set-dead (string)
-  "Parses the \"d row col owner\" STRING and sets the specific map tile to
-  a dead ant of owner.  Modifies (GAME-MAP *STATE*)."
-  (let* ((split (split-state-string string))
-         (row (parse-integer (elt split 1)))
-         (col (parse-integer (elt split 2)))
-         (owner (parse-integer (elt split 3))))
-    (unless (= 2 (aref (game-map *state*) row col))
-      (setf (aref (game-map *state*) row col) (+ owner 200)))))
-
-(defun set-food (string)
-  "Parses the \"f row col\" STRING and sets the specific map tile to food.
-  Modifies (FOOD *STATE*) and (GAME-MAP *STATE*)."
-  (let* ((split (split-state-string string))
-         (row (parse-integer (elt split 1)))
-         (col (parse-integer (elt split 2))))
-    (push (list row col) (slot-value *state* 'food))
-    (setf (aref (game-map *state*) row col) 2)))
-
-(defun set-water (string)
-  "Parses the \"w row col\" STRING and sets the specific map tile to water.
-  Modifies (GAME-MAP *STATE*)."
-  (let* ((split (split-state-string string))
-         (row (parse-integer (elt split 1)))
-         (col (parse-integer (elt split 2))))
-    (setf (aref (game-map *state*) row col) 1)))
-
-;; TODO detect the razing of hills
-(defun set-hill (string)
-  "Parses the \"h row col owner\" STRING and sets the specific map tile to
-  a hill of owner.  Modifies (HILLS *STATE*) and (GAME-MAP *STATE*)."
-  (let* ((split (split-state-string string))
-         (row (parse-integer (elt split 1)))
-         (col (parse-integer (elt split 2)))
-         (owner (parse-integer (elt split 3))))
-
-    (let ((hill-record (list row col owner)))
-      (unless (member hill-record (hills *state*) :test 'equal)
-        (push hill-record (slot-value *state* 'hills))))
-
-    (setf (aref (game-map *state*) row col) (+ owner 300))))
-
-(defun parse-turn ()
-  "Parses a typical turn.  Modifies *STATE* indirectly through RESET-GAME-MAP
-  and the SET-* functions."
-  (reset-game-map)
-  (loop for line = (read-line *standard-input* nil)
-        until (starts-with line "go")
-        do (cond ((starts-with line "f ") (set-food line))
-                 ((starts-with line "w ") (set-water line))
-                 ((starts-with line "a ") (set-ant line))
-                 ((starts-with line "d ") (set-dead line))
-                 ((starts-with line "h ") (set-hill line))))
-  ;; print turn data
-  (when *log-output*
-    (format *log-output* "hills for current turn: ~a~%" (hills *state*))))
-
-
-(defun reset-some-state ()
-  "Sets (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and (FOOD *STATE*) to NIL."
-  (setf (slot-value *state* 'enemy-ants) nil
-        (slot-value *state* 'my-ants)    nil
-        (slot-value *state* 'food)       nil))
-
-(let ((time-units (/ 1.0 internal-time-units-per-second)))
-  ;; TODO correctly name function: doesn't return wall time
-  ;; TODO use DOUBLE-FLOATs?
-  (defun wall-time (&key (offset 0))
-    "Returns the time in seconds (as a FLOAT) since SBCL was started."
-    (+ (* (get-internal-real-time) time-units)
-       offset)))
-
-(defun parse-game-state ()
-  "Calls either PARSE-TURN or PARSE-GAME-PARAMETERS depending on the line
-  on standard input.  Modifies *STATE* and returns T if the game has ended,
-  otherwise NIL."
-  (setf (slot-value *state* 'turn-start-time) (wall-time))
-  (reset-some-state)
-  (loop for line = (read-line *standard-input* nil)
-        until (> (length line) 0)
-        finally (return (cond ((starts-with line "end")
-                               (parse-turn)
-                               t)
-                              ((starts-with line "turn 0")
-                               (setf (slot-value *state* 'turn) 0)
-                               (parse-game-parameters)
-                               nil)
-                              ((starts-with line "turn ")
-                               (setf (slot-value *state* 'turn)
-                                     (par-value line))
-                               (parse-turn)
-                               nil)))))
-
-(defun turn-time-remaining ()
-  "Returns the turn time remaining in seconds (as a FLOAT)."
-  (- (+ (turn-start-time *state*) (turn-time *state*))
-     (wall-time)))
-
-(defun user-interrupt (arg)
-  (declare (ignore arg))
-  (format *debug-io* "~&User interrupt. Aborting...~%")
-  (quit))
-
-
-
-;;; intelligent code
-
-(defclass ant ()
-  ((x :accessor x :initarg x :initform (error "Must specify x"))
-   (y :accessor y :initarg y :initform (error "Must specify y"))))
-
-
-
-(defun init-internal-data (rows cols)
-  "Init internal data."
-  (setf *internal-state*
-        (make-array (list rows cols) :element-type 'fixnum :initial-element 0)))
 
 
 (defun explore-potential (r c)
@@ -323,14 +111,12 @@ better)."
               ;((= e 100) (1+ *cur-turn*)) ; own ant
               ((= e 2) (- *cur-turn*)) ; food
               (t (aref *internal-state* r c)))))
-    (when *log-output*
-      (format *log-output* "potential of (~a, ~a)=~a~%"
-              r c p))
+    (log-output "potential of (~a, ~a)=~a~%" r c p)
     p))
 
 
-(defun for-each-direction-sum (row col direction func
-                               &optional (incl-current nil))
+(defun for-each-dir-sum (row col direction func
+                         &optional (incl-current nil))
   "Call func with r & c params each direction: north, south, east, west. 
 Returns a list with results."
   (let ((r row) (c col))
@@ -347,15 +133,38 @@ Returns a list with results."
            0))))
 
 
+(defun for-each-dir-do (row col func
+                        &optional (incl-current nil))
+  "Call func with row and col params each direction: north, south, east, west.
+If func return non-nil value, the for-each-dir-do returns with that value."
+  (dolist (dir '(:north :south :east :west))
+    (let ((ret (funcall func (new-loc-row row col dir)
+                        (new-loc-col row col dir))))
+      (when ret
+        (return-from for-each-dir-do ret))))
+  (when incl-current
+    (let ((ret (funcall func row col)))
+      (when ret
+        (return-from for-each-dir-do ret)))))
+
+
+(defun move-ant (row col dir)
+  "Move ant from (row, col) to the specified dir. Remove it from my-ants list."
+  (log-output "cmd ~a from (~a,~a), internal-state at dest: ~a~%"
+              dir row col *cur-turn*)
+  (issue-order row col dir)
+  (set-value-at *internal-state* row col dir *cur-turn*)
+  (set-value-at (game-map *state*) row col nil 101) ; make ant busy
+  (remove-if (lambda (elt) (and (= row (first elt)) (= col (second elt))))
+             (my-ants *state*)))
+
+
 (defun do-ant (r c)
   "Do something with ant at coord. (r, c)."
   (let ((dir (move-explore r c)))
-    (when dir
-      (when *log-output*
-        (format *log-output* "cmd ~a from (~a,~a), internal-state at dest: ~a~%"
-                dir r c *cur-turn*))
-      (issue-order r c dir))
-    (set-value-at *internal-state* r c dir *cur-turn*)))
+    (if dir
+        (move-ant r c dir)
+        (set-value-at *internal-state* r c dir *cur-turn*))))
 
 
 (defun value-at (array row col dir)
@@ -385,6 +194,7 @@ Returns a list with results."
                               (zerop (third hill))))
           (hills *state*))))
 
+
 (defun enemy-hill-p (row col &optional dir)
   "..."
   (let* ((r row) (c col))
@@ -407,14 +217,12 @@ Returns a list with results."
 
 (defun move-explore (r c)
   "Select a cell that was not visited before or was visited a long time ago"
-  (when *log-output*
-    (format *log-output* "explore from (~a, ~a), *cur-turn*=~a~%"
-            r c *cur-turn*)
-    ;; :tmp:
-    ;;(format *log-output* "map:~%~a~%internal-state:~%~a~%"
-    ;;        (game-map *state*)
-    ;;        *internal-state*)
-    )
+  (log-output "explore from (~a, ~a), *cur-turn*=~a~%" r c *cur-turn*)
+  ;; :tmp:
+  ;;(log-output "map:~%~a~%internal-state:~%~a~%"
+  ;;        (game-map *state*)
+  ;;        *internal-state*)
+
   (let* ((pref-dir-list nil)
          (pref-dir (mod (truncate (/ *cur-turn* 64)) 4)))
     (cond
@@ -423,20 +231,139 @@ Returns a list with results."
       ((= pref-dir 2) (setf pref-dir-list '(:south :west :north :east)))
       ((= pref-dir 3) (setf pref-dir-list '(:west :north :east :south))))
 
-    (when *log-output*
-      (format *log-output* "pref-dir=~a, pref-dir-list=~a~%"
-              pref-dir pref-dir-list))
+    (log-output "pref-dir=~a, pref-dir-list=~a~%" pref-dir pref-dir-list)
 
     (let ((min (* 8 *cur-turn*))
           (dir nil))
       (dolist (try-dir pref-dir-list)
         (when (move-acceptable-p r c try-dir)
-          (let ((val (for-each-direction-sum r c try-dir 'explore-potential t)))
-            (when *log-output*
-              (format *log-output* "potential at ~a: ~a~%" try-dir val))
+          (let ((val (for-each-dir-sum r c try-dir 'explore-potential t)))
+            (log-output "potential at ~a: ~a~%" try-dir val)
             (when (< val min)
               (setf dir try-dir)
               (setf min val)))))
-      (when *log-output*
-        (format *log-output* "best direction is ~a~%" dir))
+      (log-output "best direction is ~a~%" dir)
       dir)))
+
+
+(defun dfs (row col target-row target-col depth &key max-depth not-accesible-p)
+  "Depth-first search"
+  (when (or (and max-depth (<= depth max-depth))
+            (visited-p row col)
+            (and not-accesible-p (funcall not-accesible-p row col)))
+    (return-from dfs))
+  (mark-visited row col)
+  
+  (let ((dir-list (append (if (< row target-row)
+                              '(:south :north) '(:north :south))
+                          (if (< col target-col)
+                              '(:east :west) '(:west :east)))))
+    (dolist (dir dir-list)
+      (let* ((new-r (new-loc-row row col dir))
+             (new-c (new-loc-col row col dir)))
+        (when (and (= new-r target-row)
+                   (= new-c target-col))
+          (return-from dfs (list dir)))
+        (let ((rc (dfs new-r new-c target-row target-col (1+ depth)
+                       :max-depth max-depth :not-accesible-p not-accesible-p)))
+          (when rc
+            (return-from dfs (cons dir rc))))))))
+        
+
+(defun find-path (row1 col1 row2 col2 &optional max-depth)
+  "Find path from (row1, col1) to (row2, col2). Return a list with directions."
+  (init-visited)
+  (dfs row1 col1 row2 col2 0 :max-depth max-depth :not-accesible-p 'waterp))
+
+
+(let (visited-array
+      visited-val)
+
+  (defun init-visited ()
+    "Increment visited-val to be used for the next session (to avoid resetting
+    the whole array to 0)."
+    (when (null visited-val)
+      (setf visited-val 0)
+      (setf visited-array (make-array (list (rows *state*) (cols *state*))
+                                      :element-type 'fixnum
+                                      :initial-element 0)))
+    (incf visited-val)
+    (when (> visited-val 32766) ; reset the array
+      ;; :fixme: - optimize
+      (loop for i from 0 to (rows *state*) do
+           (loop for j from 0 to (cols *state*) do
+                (setf (aref visited-array i j) 0)))
+      (setf visited-val 1)))
+
+  (defun mark-visited (row col)
+    "Mark the position as visited (with the current visited-val)."
+    (setf (aref visited-array row col) visited-val))
+
+  (defun visited-p (row col)
+    "Return true if the position has been visited."
+    (= visited-val (aref visited-array row col)))
+
+)
+
+
+(defun bfs (row col target-p &optional max-search)
+  "Breadth-first search. target-p must accept two parameters, row and col."
+  (init-visited)
+  (log-output "bfs(~a, ~a, .., ~a)~%" row col max-search)
+  (let* ((frontier (list (list row col)))
+         (search-size 0))
+    (do* ((elt (first frontier) (first frontier))
+          (elt-row (first elt) (first elt))
+          (elt-col (second elt) (second elt)))
+         ;; exit when frontier is empty or search-size exceeded max-search (if
+         ;; specified)
+         ((or (null frontier)
+              (and max-search (> search-size max-search))))
+      (when (funcall target-p elt-row elt-col)
+        (return-from bfs (list elt-row elt-col)))
+      (mark-visited elt-row elt-col)
+      (setf frontier (cdr frontier))
+      (incf search-size)
+      (for-each-dir-do elt-row elt-col
+                       (lambda (r c) (when (and (not (visited-p r c))
+                                                (not (waterp r c )))
+                                       (setf frontier
+                                             (append frontier
+                                                     (list (list r c))))))))))
+      
+      
+    
+(defun target-food (steps)
+  "Find ants close to food. Move ants towards food."
+  (log-output "Targeting food~%")
+  (dolist (food (food *state*))
+    (let ((r (first food))
+          (c (second food)))
+      (log-output "Trying to find ant for food at (~a, ~a)~%" r c)
+      (let ((ret (bfs r c 'own-ant-p (expt (* 2 steps) 2))))
+        (when ret
+          (let ((ret-r (first ret)) (ret-c (second ret)))
+            (log-output "Found an ant for food: (~a, ~a)~%" ret-r ret-c)
+            (let ((path (find-path ret-r ret-c r c (* 3 steps))))
+              (when path
+                (log-output "Path from ant to food is ~a~%" path)
+                (move-ant ret-r ret-c (first path))))))))))
+
+
+(defun target-enemy-hills (steps &optional (no-ants 1))
+  "Find ants close to enemy hill. Move ants towards enemy hill."
+  (log-output "Targeting enemy hills~%")
+  (dolist (hill (hills *state*))
+    (when (/= (third hill) 0) ; enemy hill
+      (let ((r (first hill))
+            (c (second hill)))
+        (dotimes (i no-ants)
+          (log-output "Trying to find ant for hill at (~a, ~a)~%" r c)
+          (let ((ret (bfs r c 'own-ant-p (expt (* 2 steps) 2))))
+            (when ret
+              (let ((ret-r (first ret)) (ret-c (second ret)))
+                (log-output "Found an ant for hill: (~a, ~a)~%" ret-r ret-c)
+                (let ((path (find-path ret-r ret-c r c (* 3 steps))))
+                  (when path
+                    (log-output "Path from ant to hill is ~a~%" path)
+                    (move-ant ret-r ret-r (first path))))))))))))
