@@ -111,7 +111,7 @@ better)."
               ;((= e 100) (1+ *cur-turn*)) ; own ant
               ((= e 2) (- *cur-turn*)) ; food
               (t (aref *internal-state* r c)))))
-    (log-output "potential of (~a, ~a)=~a~%" r c p)
+    ;(log-output "potential of (~a ~a)=~a~%" r c p) ; :tmp:
     p))
 
 
@@ -150,7 +150,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
 
 (defun move-ant (row col dir)
   "Move ant from (row, col) to the specified dir. Remove it from my-ants list."
-  (log-output "cmd ~a from (~a,~a), internal-state at dest: ~a~%"
+  (log-output "cmd ~a from (~a ~a), internal-state at dest: ~a~%"
               dir row col *cur-turn*)
   (issue-order row col dir)
   (set-value-at *internal-state* row col dir *cur-turn*)
@@ -159,9 +159,12 @@ If func return non-nil value, the for-each-dir-do returns with that value."
              (my-ants *state*)))
 
 
-(defun do-ant (r c)
+(defun do-ant (r c steps proximity)
   "Do something with ant at coord. (r, c)."
-  (let ((dir (move-explore r c)))
+  (let* ((near-home (nearest-own-hill r c proximity))
+         (dir (if near-home
+                  (move-near-home r c near-home steps)
+                  (move-explore r c))))
     (if dir
         (move-ant r c dir)
         (set-value-at *internal-state* r c dir *cur-turn*))))
@@ -207,6 +210,23 @@ If func return non-nil value, the for-each-dir-do returns with that value."
           (hills *state*))))
 
 
+(defun nearest-own-hill (row col proximity)
+  "Return the hill if the specified coord. are close to some own hill."
+  (log-output "Checking if (~a ~a) is near home (proximity=~a)~%"
+              row col proximity)
+  (dolist (hill (hills *state*))
+    (when (zerop (third hill)) ; own hill
+      (let ((hill-r (first hill))
+            (hill-c (second hill)))
+        (log-output "Home is (~a ~a)~%" hill-r hill-c)
+        (when (and (>= row (- hill-r proximity))
+                   (<= row (+ hill-r proximity))
+                   (>= col (- hill-c proximity))
+                   (<= col (+ hill-c proximity)))
+          (return-from nearest-own-hill hill)))))
+  nil)
+
+
 (defun move-acceptable-p (row col dir)
   "Return true if the move is acceptable"
   (let ((ent (get-entity-at row col dir)))
@@ -217,7 +237,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
 
 (defun move-explore (r c)
   "Select a cell that was not visited before or was visited a long time ago"
-  (log-output "explore from (~a, ~a), *cur-turn*=~a~%" r c *cur-turn*)
+  (log-output "explore from (~a ~a), *cur-turn*=~a~%" r c *cur-turn*)
   ;; :tmp:
   ;;(log-output "map:~%~a~%internal-state:~%~a~%"
   ;;        (game-map *state*)
@@ -231,9 +251,9 @@ If func return non-nil value, the for-each-dir-do returns with that value."
       ((= pref-dir 2) (setf pref-dir-list '(:south :west :north :east)))
       ((= pref-dir 3) (setf pref-dir-list '(:west :north :east :south))))
 
-    (log-output "pref-dir=~a, pref-dir-list=~a~%" pref-dir pref-dir-list)
+    (log-output "pref-dir=~a, pref-dir-list=~a ~%" pref-dir pref-dir-list)
 
-    (let ((min (* 8 *cur-turn*))
+    (let ((min (* 16 *cur-turn*))
           (dir nil))
       (dolist (try-dir pref-dir-list)
         (when (move-acceptable-p r c try-dir)
@@ -246,28 +266,59 @@ If func return non-nil value, the for-each-dir-do returns with that value."
       dir)))
 
 
-(defun dfs (row col target-row target-col depth &key max-depth not-accesible-p)
+(defun move-near-home (r c hill steps)
+  "Move an ant near home (tricky)."
+  (log-output "explore near home, from (~a ~a), *cur-turn*=~a~%" r c *cur-turn*)
+  (let ((cur-dist (distance r c (first hill) (second hill))))
+    (if (or (null (fourth hill))
+            (> cur-dist (nth 5 hill)))
+        (progn
+          ;; Don't have a furthest point or it does not have max distance.
+          ;; Set max and then move independently.
+          (log-output "furthest point from (~a ~a) is (~a ~a) ~%"
+                      (first hill) (second hill) r c)
+          (setf (nth 3 hill) r)
+          (setf (nth 4 hill) c)
+          (setf (nth 5 hill) cur-dist)
+          (move-explore r c))
+        (progn
+          ;; move towards furthest point
+          (let* ((target-r (nth 3 hill))
+                 (target-c (nth 4 hill))
+                 (path (find-path r c target-r target-c (* 4 steps))))
+            (if path
+                (progn
+                  (log-output "Path from ant to furthest point is ~a~%" path)
+                  (first path))
+                (progn
+                  (log-output "Path not found to furthest point~%")
+                  (move-explore r c))))))))
+
+
+(defun dfs (row col target-row target-col depth &key max-depth not-accesible-p
+            dir-list)
   "Depth-first search"
   (when (or (and max-depth (<= depth max-depth))
             (visited-p row col)
             (and not-accesible-p (funcall not-accesible-p row col)))
     (return-from dfs))
   (mark-visited row col)
-  
-  (let ((dir-list (append (if (< row target-row)
-                              '(:south :north) '(:north :south))
-                          (if (< col target-col)
-                              '(:east :west) '(:west :east)))))
-    (dolist (dir dir-list)
-      (let* ((new-r (new-loc-row row col dir))
-             (new-c (new-loc-col row col dir)))
-        (when (and (= new-r target-row)
-                   (= new-c target-col))
-          (return-from dfs (list dir)))
-        (let ((rc (dfs new-r new-c target-row target-col (1+ depth)
-                       :max-depth max-depth :not-accesible-p not-accesible-p)))
-          (when rc
-            (return-from dfs (cons dir rc))))))))
+  (when (null dir-list)
+    (setf dir-list (append (if (< row target-row) '(:south) '(:north))
+                           (if (< col target-col) '(:east) '(:west))
+                           (if (>= row target-row) '(:north) '(:south))
+                           (if (>= col target-col) '(:west) '(:east)))))
+  (dolist (dir dir-list)
+    (let* ((new-r (new-loc-row row col dir))
+           (new-c (new-loc-col row col dir)))
+      (when (and (= new-r target-row)
+                 (= new-c target-col))
+        (return-from dfs (list dir)))
+      (let ((rc (dfs new-r new-c target-row target-col (1+ depth)
+                     :max-depth max-depth :not-accesible-p not-accesible-p
+                     :dir-list dir-list)))
+        (when rc
+          (return-from dfs (cons dir rc)))))))
         
 
 (defun find-path (row1 col1 row2 col2 &optional max-depth)
@@ -290,8 +341,8 @@ If func return non-nil value, the for-each-dir-do returns with that value."
     (incf visited-val)
     (when (> visited-val 32766) ; reset the array
       ;; :fixme: - optimize
-      (loop for i from 0 to (rows *state*) do
-           (loop for j from 0 to (cols *state*) do
+      (loop for i from 0 to (1- (rows *state*)) do
+           (loop for j from 0 to (1- (cols *state*)) do
                 (setf (aref visited-array i j) 0)))
       (setf visited-val 1)))
 
@@ -310,28 +361,29 @@ If func return non-nil value, the for-each-dir-do returns with that value."
   "Breadth-first search. target-p must accept two parameters, row and col."
   (init-visited)
   (log-output "bfs(~a, ~a, .., ~a)~%" row col max-search)
+  (mark-visited row col)
   (let* ((frontier (list (list row col)))
          (search-size 0))
     (do* ((elt (first frontier) (first frontier))
           (elt-row (first elt) (first elt))
           (elt-col (second elt) (second elt)))
-         ;; exit when frontier is empty or search-size exceeded max-search (if
-         ;; specified)
+         ;; exit when frontier is empty or search-size exceeded max-search
+         ;; (if specified)
          ((or (null frontier)
               (and max-search (> search-size max-search))))
       (when (funcall target-p elt-row elt-col)
         (return-from bfs (list elt-row elt-col)))
-      (mark-visited elt-row elt-col)
       (setf frontier (cdr frontier))
+      ;(log-output "bfs: remove (~a ~a) from frontier~%" elt-row elt-col);:tmp:
       (incf search-size)
-      (for-each-dir-do elt-row elt-col
-                       (lambda (r c) (when (and (not (visited-p r c))
-                                                (not (waterp r c )))
-                                       (setf frontier
-                                             (append frontier
-                                                     (list (list r c))))))))))
-      
-      
+      (for-each-dir-do elt-row elt-col 
+                       (lambda (r c)
+                         (when (and (not (visited-p r c)) (not (waterp r c )))
+                           (setf frontier (append frontier (list (list r c))))
+                           (mark-visited r c)
+                           ;(log-output "bfs: add (~a ~a) to frontier~%" r c);:tmp:
+                           ))))))
+
     
 (defun target-food (steps)
   "Find ants close to food. Move ants towards food."
@@ -339,11 +391,11 @@ If func return non-nil value, the for-each-dir-do returns with that value."
   (dolist (food (food *state*))
     (let ((r (first food))
           (c (second food)))
-      (log-output "Trying to find ant for food at (~a, ~a)~%" r c)
+      (log-output "Trying to find ant for food at (~a ~a)~%" r c)
       (let ((ret (bfs r c 'own-ant-p (expt (* 2 steps) 2))))
         (when ret
           (let ((ret-r (first ret)) (ret-c (second ret)))
-            (log-output "Found an ant for food: (~a, ~a)~%" ret-r ret-c)
+            (log-output "Found an ant for food: (~a ~a)~%" ret-r ret-c)
             (let ((path (find-path ret-r ret-c r c (* 3 steps))))
               (when path
                 (log-output "Path from ant to food is ~a~%" path)
@@ -358,11 +410,11 @@ If func return non-nil value, the for-each-dir-do returns with that value."
       (let ((r (first hill))
             (c (second hill)))
         (dotimes (i no-ants)
-          (log-output "Trying to find ant for hill at (~a, ~a)~%" r c)
+          (log-output "Trying to find ant for hill at (~a ~a)~%" r c)
           (let ((ret (bfs r c 'own-ant-p (expt (* 2 steps) 2))))
             (when ret
               (let ((ret-r (first ret)) (ret-c (second ret)))
-                (log-output "Found an ant for hill: (~a, ~a)~%" ret-r ret-c)
+                (log-output "Found an ant for hill: (~a ~a)~%" ret-r ret-c)
                 (let ((path (find-path ret-r ret-c r c (* 3 steps))))
                   (when path
                     (log-output "Path from ant to hill is ~a~%" path)

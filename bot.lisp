@@ -19,7 +19,9 @@
    ;; (list row col)
    (food :reader food :initform nil)
 
+   ;; (list row col owner furthest-r furthest-c furthest-distance
    (hills :reader hills :initform nil)
+
    (turn-time :reader turn-time :initform 1000)
    (load-time :reader load-time :initform 3000)
    (turn-start-time :reader turn-start-time :initform nil)
@@ -169,7 +171,7 @@
          (col (parse-integer (elt split 2)))
          (owner (parse-integer (elt split 3))))
 
-    (let ((hill-record (list row col owner)))
+    (let ((hill-record (list row col owner nil nil nil)))
       (unless (member hill-record (hills *state*) :test 'equal)
         (push hill-record (slot-value *state* 'hills))))
 
@@ -187,7 +189,9 @@
                  ((starts-with line "d ") (set-dead line))
                  ((starts-with line "h ") (set-hill line))))
   ;; print turn data
-  (log-output "hills for current turn: ~a~%" (hills *state*)))
+  (log-output "hills for current turn: ~a~%" (hills *state*))
+  (log-output "own ants for current turn: ~a~%" (my-ants *state*))
+  (log-output "food for current turn: ~a~%" (food *state*)))
 
 
 (defun reset-some-state ()
@@ -254,21 +258,21 @@
   "Print the output to *log-output* stream, if not nil."
   (when *log-output*
     (apply 'format *log-output* params)
-    (log-output-finish) ;; :tmp:
+    ;(log-output-finish) ;; :tmp:
     ))
 
 
 ;; This is the actual 'AI' function.
 (defun do-turn ()
-  (let ((steps 8))
+  (let ((steps 10))
+    (target-enemy-hills (* 3 steps) 2)
     (target-food steps)
-    (target-enemy-hills (* 2 steps) 2)
 
     (loop
        for ant in (my-ants *state*)
        for row = (elt ant 0)
        for col = (elt ant 1)
-       do (do-ant row col))
+       do (do-ant row col steps 7))
     (incf *cur-turn*)
     (log-output-finish)))
 
