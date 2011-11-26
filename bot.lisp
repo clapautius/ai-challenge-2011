@@ -19,10 +19,13 @@
    ;; (list row col)
    (food :reader food :initform nil)
 
-   ;; (list row col owner furthest-r furthest-c furthest-distance
+   ;; (list row col owner furthest-r furthest-c)
    (hills :reader hills :initform nil)
 
+   ;; ms
    (turn-time :reader turn-time :initform 1000)
+   (turn-time-5-pc :reader turn-time-5-pc :initform 50)
+
    (load-time :reader load-time :initform 3000)
    (turn-start-time :reader turn-start-time :initform nil)
    (view-radius2 :reader view-radius2 :initform 93)
@@ -36,6 +39,10 @@
 (defvar *state* (make-instance 'state))
 
 (defvar *internal-state* nil)
+
+;; array containing guidance directions, one of nil, :north, :south, :east, :west.
+(defvar *policy-array* nil)
+
 (defvar *cur-turn* 1)
 (defvar *log-output* nil)
 
@@ -87,8 +94,7 @@
                  ((starts-with line "turns ")
                   (setf (slot-value *state* 'turns) (par-value line)))
                  ((starts-with line "turntime ")
-                  (setf (slot-value *state* 'turn-time)
-                        (/ (par-value line) 1000.0)))
+                  (setf (slot-value *state* 'turn-time) (par-value line)))
                  ((starts-with line "viewradius2 ")
                   (setf (slot-value *state* 'view-radius2) (par-value line)))))
   (setf (slot-value *state* 'game-map)
@@ -172,7 +178,10 @@
          (owner (parse-integer (elt split 3))))
 
     (let ((hill-record (list row col owner nil nil nil)))
-      (unless (member hill-record (hills *state*) :test 'equal)
+      (unless (member hill-record (hills *state*)
+                      :test (lambda (hill1 hill2)
+                              (and (= (first hill1) (first hill2))
+                                   (= (second hill2) (second hill2)))))
         (push hill-record (slot-value *state* 'hills))))
 
     (setf (aref (game-map *state*) row col) (+ owner 300))))
@@ -204,15 +213,23 @@
 (defun init-internal-data (rows cols)
   "Init internal data."
   (setf *internal-state*
-        (make-array (list rows cols) :element-type 'fixnum :initial-element 0)))
+        (make-array (list rows cols) :element-type 'fixnum :initial-element 0))
+  (setf *policy-array*
+        (make-array (list rows cols) :initial-element nil))
+  ;; set the 5% value
+  (setf (slot-value *state* 'turn-time-5-pc)
+        (round (/ (* (turn-time *state*) 5) 100)))
+  (log-output "Turn time: ~a, turn time 5 pc: ~a~%"
+              (turn-time *state*) (turn-time-5-pc *state*))
+  (log-output "Rows: ~a, cols: ~a~%" rows cols))
 
 
 (let ((time-units (/ 1.0 internal-time-units-per-second)))
   ;; TODO correctly name function: doesn't return wall time
   ;; TODO use DOUBLE-FLOATs?
   (defun wall-time (&key (offset 0))
-    "Returns the time in seconds (as a FLOAT) since SBCL was started."
-    (+ (* (get-internal-real-time) time-units)
+    "Returns the time in miliseconds (as a FLOAT) since SBCL was started."
+    (+ (* (get-internal-real-time) time-units 1000)
        offset)))
 
 (defun parse-game-state ()
@@ -237,9 +254,9 @@
                                nil)))))
 
 (defun turn-time-remaining ()
-  "Returns the turn time remaining in seconds (as a FLOAT)."
-  (- (+ (turn-start-time *state*) (turn-time *state*))
-     (wall-time)))
+  "Returns the turn time remaining in miliseconds (as an integer)."
+  (round (- (+ (turn-start-time *state*) (turn-time *state*))
+            (wall-time))))
 
 
 (defun user-interrupt (arg)
@@ -258,22 +275,74 @@
   "Print the output to *log-output* stream, if not nil."
   (when *log-output*
     (apply 'format *log-output* params)
-    ;(log-output-finish) ;; :tmp:
+    (log-output-finish) ;; :tmp:
     ))
+
+
+(defun log-output-array (array row col len)
+  "Print a matrix containing elements from (row-len, col-len) to
+   (row+len, col+len)"
+  (when *log-output*
+    (log-output "printing array from (~a ~a) to (~a ~a)~%"
+                (- row len) (- col len) (+ row len) (+ col len))
+    (loop for i from (- row len) to (+ row len) do
+         (loop for j from (- col len) to (+ col len)
+              do 
+              (let* ((nl (normalize-loc i j))
+                     (val (value-at array (first nl) (second nl) :none))
+                     (game-val (value-at (game-map *state*)
+                                         (first nl) (second nl) :none)))
+                (log-output "~a~a| "
+                            (cond
+                              ((null val) " ")
+                              ((eql val :north) "n")
+                              ((eql val :south) "s")
+                              ((eql val :east) "e")
+                              ((eql val :west) "w")
+                              ((eql val :none) "x"))
+                            (cond
+                              ((eql game-val 1) "*")
+                              ((or (eql game-val 100) (eql game-val 101)) "#")
+                              (t " ")))))
+         (log-output "~%"))))
+
+
+(defun almost-time-up-p ()
+
+  (<= (turn-time-remaining) (turn-time-5-pc *state*)))
+
+
+(defun proximity-to-dfs-steps (proximity)
+  (* 3 proximity))
+
+
+(defun proximity-to-bfs-steps (proximity)
+  (expt proximity 2))
 
 
 ;; This is the actual 'AI' function.
 (defun do-turn ()
-  (let ((steps 10))
-    (target-enemy-hills (* 3 steps) 2)
-    (target-food steps)
+  (let ((food-cells-dist 30)
+        (food-cells-path-len 10)
+        (enemy-hill-steps 10)
+        (home-search-area 40))
+
+    (target-enemy-hills enemy-hill-steps 2)
+    (target-food food-cells-dist food-cells-path-len)
 
     (loop
        for ant in (my-ants *state*)
        for row = (elt ant 0)
        for col = (elt ant 1)
-       do (do-ant row col steps 7))
+       until (almost-time-up-p)
+       do (do-ant row col))
+
+    (when (= *cur-turn* 16)
+      (setup-home-area home-search-area))
+
     (incf *cur-turn*)
+    (if (almost-time-up-p)
+        (log-output "Time remaining: ~a - almost time up !!~%"
+                    (turn-time-remaining))
+        (log-output "Time remaining: ~a~%" (turn-time-remaining)))
     (log-output-finish)))
-
-

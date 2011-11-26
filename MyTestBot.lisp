@@ -66,8 +66,8 @@
   )
 
 
-(defun test-crash-1 ()
-  "Test a crash situation"
+(defun test-furthest-point ()
+  "Test furthest-point-from function"
   ;; init ant data
   (setf (slot-value *state* 'rows) 8)
   (setf (slot-value *state* 'cols) 8)
@@ -83,7 +83,6 @@
                                         (0 0 0 0 0 0 0 0))))
   (set-food "f 5 3")
   (set-ant "a 4 4 0");
-
   (init-internal-data (rows *state*) (cols *state*))
-  (loop for i from 1 to 5
-       do (do-turn)))
+  (format t "furthest point from (0 0) with max-search 16 is ~a~%"
+          (furthest-point-from 0 0 16)))
