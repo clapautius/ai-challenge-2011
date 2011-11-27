@@ -1,9 +1,81 @@
 ;;;; functions/classes related to ants and maps
 
 (defclass ant ()
-  ((row :accessor row :initform nil)
-   (col :accessor col :initform nil)
-   (has-task-p :accessor has-task-p :initform nil)))
+  ((row :accessor row :initarg :row :initform nil)
+   (col :accessor col :initarg :col :initform nil)
+
+   ;; (list task-type target-row target-col)
+   ;; :follow-food :attack-hill
+   (task :accessor task :initform nil)
+   (target-row :accessor target-row)
+   (target-col :accessor target-col)
+   (task-wait :accessor task-wait :initform 0)
+
+   (route :accessor route :initform nil)))
+
+
+(defgeneric move-ant (ant direction))
+
+(defmethod move-ant ((ant ant) direction)
+  "Move ant from the current position to the specified dir."
+  (move-ant-from-pos (row ant) (col ant) direction))
+
+
+(defun move-ant-from-pos (row col dir)
+  "Move ant from (row, col) to the specified dir."
+  (log-output "cmd ~a from (~a ~a), internal-state at dest: ~a~%"
+              dir row col *cur-turn*)
+  (issue-order row col dir)
+  (let* ((nl (new-location row col dir))
+         (new-row (first nl))
+         (new-col (second nl))
+         (cur-ant (get-ant-at row col)))
+    (set-entity-at row col nil 0)
+    (set-entity-at new-row new-col nil 100)
+    (set-value-at *ant-map* row col nil nil)
+    (set-value-at *ant-map* new-row new-col nil cur-ant)
+    (set-value-at *internal-state* row col dir *cur-turn*)))
+
+
+
+(defun get-ant-at (row col &optional direction)
+  "Return ant object at (row col) (with direction, if specified)."
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (aref *ant-map* (elt nl 0) (elt nl 1)))
+      (aref *ant-map* row col)))
+
+
+(defun set-ant-at (row col value &optional direction)
+  "Set an ant object at the specified coords. (row col) (with direction, if
+specified). If there's already an ant, it is overwriten."
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (setf (aref *ant-map* (elt nl 0) (elt nl 1)) value))
+      (setf (aref *ant-map* row col) value)))
+
+
+(defun own-ant-p (row col &optional (direction nil))
+  "Returns T if the tile in the DIRECTION of ROW,COL is own ant, otherwise
+  returns NIL."
+  (= 100 (get-entity-at row col direction)))
+
+
+(defun own-free-ant-p (row col &optional (direction nil))
+  "Returns T if the tile in the DIRECTION of ROW,COL is own ant and the ant is
+  free, otherwise returns NIL."
+  (let* ((nl (if direction (new-location row col direction) (list row col)))
+         (r (first nl)) (c (second nl))
+         (elt (aref (game-map *state*) r c)))
+    (and (= 100 elt) (null (task (get-ant-at row col direction))))))
+
+
+(defun remove-dead-ants (row col)
+  "Remove own dead ants from lists and maps."
+  (set-ant-at row col nil)
+  (remove-if (lambda (ant) (and (= (row ant) row)
+                                (= (col ant) col)))
+             (my-ants *state*)))
 
 
 (defun distance (row1 col1 row2 col2)
@@ -72,31 +144,20 @@
       (= 1 (aref (game-map *state*) row col))))
 
 
-(defun own-ant-p (row col &optional (direction nil))
-  "Returns T if the tile in the DIRECTION of ROW,COL is own ant, otherwise
-  returns NIL."
-  (let* ((nl (if direction (new-location row col direction) (list row col)))
-         (r (first nl)) (c (second nl))
-         (elt (aref (game-map *state*) r c)))
-    (or (= 100 elt)
-        (= 101 elt))))
 
-
-(defun own-free-ant-p (row col &optional (direction nil))
-  "Returns T if the tile in the DIRECTION of ROW,COL is own ant and the ant is
-  free, otherwise returns NIL."
-  (let* ((nl (if direction (new-location row col direction) (list row col)))
-         (r (first nl)) (c (second nl))
-         (elt (aref (game-map *state*) r c)))
-    (= 100 elt)))
-
-
-(defun get-entity-at (row col &optional (direction nil))
+(defun get-entity-at (row col &optional direction)
   (if direction
       (let ((nl (new-location row col direction)))
         (aref (game-map *state*) (elt nl 0) (elt nl 1)))
       (aref (game-map *state*) row col)))
 
+
+(defun set-entity-at (row col direction value)
+  "direction may be null"
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (setf (aref (game-map *state*) (elt nl 0) (elt nl 1)) value))
+      (setf (aref (game-map *state*) row col) value)))
 
 
 (defun explore-potential (r c)
@@ -148,27 +209,61 @@ If func return non-nil value, the for-each-dir-do returns with that value."
         (return-from for-each-dir-do ret)))))
 
 
-(defun move-ant (row col dir)
-  "Move ant from (row, col) to the specified dir. Remove it from my-ants list."
-  (log-output "cmd ~a from (~a ~a), internal-state at dest: ~a~%"
-              dir row col *cur-turn*)
-  (issue-order row col dir)
-  (set-value-at *internal-state* row col dir *cur-turn*)
-  (set-value-at (game-map *state*) row col nil 101) ; make ant busy
-  (remove-if (lambda (elt) (and (= row (first elt)) (= col (second elt))))
-             (my-ants *state*)))
+(defun give-ant-a-task (ant row col task dir-list)
+  "Give the ant a set of coords, a task and a list of directions.
+Calls move-ant()."
+  (cond
+    (task
+     (setf (target-row ant) row)
+     (setf (target-col ant) col)
+     (setf (task ant) task)
+     (setf (task-wait ant) 0)
+     (setf (route ant) (cdr dir-list))
+     (move-ant ant (first dir-list)))
+    (t
+     (setf (task ant) nil)
+     (setf (task-wait ant) 0)
+     (setf (route ant) nil))))
 
 
-(defun do-ant (r c near-home-area)
+(defun do-ant (ant near-home-area)
   "Do something with ant at coord. (r, c)."
+  (let ((r (row ant)) (c (col ant)))
   (log-output "doing something with ant at (~a ~a)~%" r c)
-  (let* ((near-home (nearest-own-hill r c))
-         (dir (if near-home
-                  (move-near-home r c near-home near-home-area)
-                  (move-explore r c))))
-    (if dir
-        (move-ant r c dir)
-        (set-value-at *internal-state* r c dir *cur-turn*))))
+  (when (task ant)
+    (log-output "ant has a task: ~a~%" (task ant))
+    (cond
+      ;; ant reached its target
+      ((and (= r (target-row ant)) (= c (target-col ant)))
+       (log-output "ant has reached its target~%")
+       (give-ant-a-task ant 0 0 nil nil))
+      ;; move ahead
+      (t
+       (if (move-acceptable-p r c (first (route ant)))
+           ;; the move is acceptable
+           (progn
+             (log-output "move according to route, dir=~a~%"
+                         (first (route ant)))
+             (setf (task-wait ant) 0)
+             (move-ant-from-pos r c (first (route ant)))
+             (setf (route ant) (cdr (route ant))))
+           ;; the move is not acceptable
+           (progn
+             (log-output "cannot move according to route~%")
+             (incf (task-wait ant))
+             (when (> (task-wait ant) 3)
+               (log-output "waited too long, aborting task")
+               (give-ant-a-task ant 0 0 nil nil)))))))
+
+  ;; no task assigned to ant
+  (when (null (task ant))
+    (let* ((near-home (nearest-own-hill r c))
+           (dir (if near-home
+                    (move-near-home r c near-home near-home-area)
+                    (move-explore r c))))
+      (if dir
+          (move-ant-from-pos r c dir)
+          (set-value-at *internal-state* r c dir *cur-turn*))))))
 
 
 (defun value-at (array row col dir)
@@ -441,7 +536,17 @@ If func return non-nil value, the for-each-dir-do returns with that value."
                              ;;(log-output "bfs: add (~a ~a) to frontier~%" r c);:tmp:
                              (mark-visited r c))
                            nil))))))
+
   
+(defun ant-targeting-cell-p (row col task)
+  "Return true if there is an ant going towards the specified cell with the
+  specified task."
+  (some (lambda (ant)
+          (and (eql (task ant) task)
+               (= (target-row ant) row)
+               (= (target-col ant) col)))
+        (my-ants *state*)))
+
   
 (defun target-food (cells path-len)
   "Find ants close to food. Move ants towards food."
@@ -449,25 +554,30 @@ If func return non-nil value, the for-each-dir-do returns with that value."
   (dolist (food (food *state*))
     (let ((r (first food))
           (c (second food)))
-      (log-output "Trying to find ant for food at (~a ~a)~%" r c)
-      (let ((ret (bfs r c 'own-free-ant-p cells)))
-        (when ret
-          (let ((ret-r (first ret)) (ret-c (second ret)))
-            (log-output "Found an ant for food: (~a ~a)~%" ret-r ret-c)
-            (let ((path (find-path ret-r ret-c r c path-len)))
-              (when path
-                (log-output "Path from ant to food is ~a~%" path)
-                (move-ant ret-r ret-c (first path))))))))))
+      ;; check if there's an ant trying to get this food
+      (unless (ant-targeting-cell-p r c :follow-food)
+        (log-output "Trying to find ant for food at (~a ~a)~%" r c)
+        (let ((ret (bfs r c 'own-free-ant-p cells)))
+          (when ret
+            (let ((ret-r (first ret)) (ret-c (second ret)))
+              (log-output "Found an ant for food: (~a ~a)~%" ret-r ret-c)
+              (let ((path (find-path ret-r ret-c r c path-len)))
+                (when path
+                  (log-output "Path from ant to food is ~a~%" path)
+                  (give-ant-a-task (get-ant-at ret-r ret-c) r c
+                                   :follow-food path))))))))))
 
 
-(defun target-enemy-hills (steps &optional (no-ants 1))
+;(defun target-enemy-hills (steps &optional (no-ants 1))
+(defun target-enemy-hills (steps)
   "Find ants close to enemy hill. Move ants towards enemy hill."
   (log-output "Targeting enemy hills~%")
   (dolist (hill (hills *state*))
     (when (/= (third hill) 0) ; enemy hill
       (let ((r (first hill))
             (c (second hill)))
-        (dotimes (i no-ants)
+        ;; check if there's an ant trying to get to this hill
+        (unless (ant-targeting-cell-p r c :follow-hill)
           (log-output "Trying to find ant for hill at (~a ~a)~%" r c)
           (let ((ret (bfs r c 'own-free-ant-p (expt (* 2 steps) 2))))
             (when ret
@@ -476,4 +586,5 @@ If func return non-nil value, the for-each-dir-do returns with that value."
                 (let ((path (find-path ret-r ret-c r c (* 3 steps))))
                   (when path
                     (log-output "Path from ant to hill is ~a~%" path)
-                    (move-ant ret-r ret-r (first path))))))))))))
+                    (give-ant-a-task (get-ant-at ret-r ret-c) r c
+                                     :follow-hill path)))))))))))

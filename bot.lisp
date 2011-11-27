@@ -4,8 +4,8 @@
 
 ;;; On map:
 ;;;   1 - water
-;;; 100 - own ant (free)
-;;; 101 - own ant (busy)
+;;; 100 - own ant
+;;; 300 - own hill
 
 
 (defclass state ()
@@ -39,6 +39,9 @@
 (defvar *state* (make-instance 'state))
 
 (defvar *internal-state* nil)
+
+;; array containing references to ants objects
+(defvar *ant-map* nil)
 
 ;; array containing guidance directions, one of nil, :north, :south, :east, :west.
 (defvar *policy-array* nil)
@@ -128,6 +131,7 @@
                   (push (coerce (nreverse value) 'string) result))
                 (return (nreverse result))))
 
+
 (defun set-ant (string)
   "Parses the \"a row col owner\" STRING and sets the specific map tile to
   an ant of owner.  Modifies (ENEMY-ANTS *STATE*), (MY-ANTS *STATE*) and
@@ -137,9 +141,13 @@
          (col (parse-integer (elt split 2)))
          (owner (parse-integer (elt split 3))))
     (if (= owner 0)
-        (push (list row col) (slot-value *state* 'my-ants))
+        ;; my ant
+        (let ((new-ant (make-instance 'ant :row row :col col)))
+          (push new-ant (slot-value *state* 'my-ants))
+          (setf (aref *ant-map* row col) new-ant))
         (push (list row col owner) (slot-value *state* 'enemy-ants)))
     (setf (aref (game-map *state*) row col) (+ owner 100))))
+
 
 (defun set-dead (string)
   "Parses the \"d row col owner\" STRING and sets the specific map tile to
@@ -149,7 +157,10 @@
          (col (parse-integer (elt split 2)))
          (owner (parse-integer (elt split 3))))
     (unless (= 2 (aref (game-map *state*) row col))
-      (setf (aref (game-map *state*) row col) (+ owner 200)))))
+      (setf (aref (game-map *state*) row col) (+ owner 200)))
+    (when (= 0 owner)
+      (remove-dead-ants row col))))
+
 
 (defun set-food (string)
   "Parses the \"f row col\" STRING and sets the specific map tile to food.
@@ -215,6 +226,8 @@
   (setf *internal-state*
         (make-array (list rows cols) :element-type 'fixnum :initial-element 0))
   (setf *policy-array*
+        (make-array (list rows cols) :initial-element nil))
+  (setf *ant-map*
         (make-array (list rows cols) :initial-element nil))
   ;; set the 5% value
   (setf (slot-value *state* 'turn-time-5-pc)
@@ -328,15 +341,14 @@
         (enemy-hill-steps 10)
         (home-search-area 44))
 
-    (target-enemy-hills enemy-hill-steps 2)
+    ;(target-enemy-hills enemy-hill-steps 2)
+    (target-enemy-hills enemy-hill-steps)
     (target-food food-cells-dist food-cells-path-len)
 
     (loop
        for ant in (my-ants *state*)
-       for row = (elt ant 0)
-       for col = (elt ant 1)
        until (almost-time-up-p)
-       do (do-ant row col home-search-area))
+       do (do-ant ant home-search-area))
 
     (when (= *cur-turn* 16)
       (setup-home-area home-search-area))
