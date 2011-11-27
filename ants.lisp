@@ -390,9 +390,9 @@ Calls ant-move()."
 (defun setup-home-area (search-area)
   "Compute furthest points, setup local policy around home."
   (log-output "setting up home area (search area=~a)~%" search-area)
-  (log-output "hills=~a~%" (hills *state*)) ; :tmp:
+  ;(log-output "hills=~a~%" (hills *state*)) ; :tmp:
   (dolist (hill (hills *state*))
-    (log-output-array (game-map *state*) (first hill) (second hill) 5) ; :tmp:
+    ;(log-output-array (game-map *state*) (first hill) (second hill) 5) ; :tmp:
     (when (own-hill-p (first hill) (second hill)) ; :fixme: - optimize
       (compute-furthest-points hill (round (* 0.9 search-area)))
 

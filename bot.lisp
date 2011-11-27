@@ -145,14 +145,14 @@
         (if (aref *ant-map* row col)
             (let ((old-ant (get-ant-at row col)))
               ;; ant is older
-              (log-output "adding older ant ~a to list~%" old-ant) ; :tmp:
+              ;(log-output "adding older ant ~a to list~%" old-ant) ; :tmp:
               ;; update coords.
               (setf (row old-ant) row)
               (setf (col old-ant) col)
               (push old-ant (slot-value *state* 'my-ants)))
             ;; a new ant is bord
             (let ((new-ant (make-instance 'ant :row row :col col)))
-              (log-output "a new ant is born: ~a~%" new-ant) ; :tmp:
+              ;(log-output "a new ant is born: ~a~%" new-ant) ; :tmp:
               (push new-ant (slot-value *state* 'my-ants))
               (setf (aref *ant-map* row col) new-ant)))
         (push (list row col owner) (slot-value *state* 'enemy-ants)))
@@ -298,7 +298,7 @@
   "Print the output to *log-output* stream, if not nil."
   (when *log-output*
     (apply 'format *log-output* params)
-    (log-output-finish) ;; :tmp:
+    ;(log-output-finish) ;; :tmp:
     ))
 
 
