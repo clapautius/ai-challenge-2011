@@ -159,12 +159,12 @@ If func return non-nil value, the for-each-dir-do returns with that value."
              (my-ants *state*)))
 
 
-(defun do-ant (r c)
+(defun do-ant (r c near-home-area)
   "Do something with ant at coord. (r, c)."
   (log-output "doing something with ant at (~a ~a)~%" r c)
   (let* ((near-home (nearest-own-hill r c))
          (dir (if near-home
-                  (move-near-home r c near-home)
+                  (move-near-home r c near-home near-home-area)
                   (move-explore r c))))
     (if dir
         (move-ant r c dir)
@@ -187,16 +187,13 @@ If func return non-nil value, the for-each-dir-do returns with that value."
     (setf (aref array r c) value)))
 
 
-(defun own-hill-p (row col &optional dir)
-  "..."
-  (let* ((r row) (c col))
-    (when dir
-      (setf r (new-loc-row row col dir))
-      (setf c (new-loc-col row col dir)))
-    (some (lambda (hill) (and (= r (first hill))
-                              (= c (second hill))
-                              (zerop (third hill))))
-          (hills *state*))))
+(defun own-hill-p (row col &optional direction)
+  "Returns t if the tile in the DIRECTION of ROW,COL is own hill, otherwise
+  returns NIL."
+  (if direction
+      (let ((nl (new-location row col direction)))
+        (= 300 (aref (game-map *state*) (elt nl 0) (elt nl 1))))
+      (= 300 (aref (game-map *state*) row col))))
 
 
 (defun enemy-hill-p (row col &optional dir)
@@ -215,7 +212,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
   "Return the hill if the specified coord. are close to some own hill. Uses
 *policy-array*." 
   (log-output "Checking if (~a ~a) is near home~%" row col)
-  (not (null (value-at *policy-array* row col nil))))
+  (value-at *policy-array* row col nil))
 
 
 (defun furthest-point-from (row col search-area)
@@ -237,7 +234,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
   "Return true if the move is acceptable"
   (let ((ent (get-entity-at row col dir)))
     (and (/= 1 ent) ; not water
-         (not (own-hill-p row col dir)) ; not own hill
+         ;(not (own-hill-p row col dir)) ; not own hill
          (/= (value-at *internal-state* row col dir) *cur-turn*))))
   
 
@@ -275,79 +272,69 @@ If func return non-nil value, the for-each-dir-do returns with that value."
 (defun setup-home-area (search-area)
   "Compute furthest points, setup local policy around home."
   (log-output "setting up home area (search area=~a)~%" search-area)
-  (compute-furthest-points (round (* 0.9 search-area)))
-
-  ;; compute local policy towards furthest points
-  (dolist (hill (hills *state*))
-    (let ((hill-r (first hill)) (hill-c (second hill)))
-      (when (own-hill-p hill-r hill-c) ; :fixme: - optimize
-        (let ((near-home-list (list 0)))
-          (bfs hill-r hill-c
-               (lambda (r c)
-                 (setf near-home-list
-                       (nconc near-home-list (list (list r c))))
-                 nil) ; return nil to continue search
-               search-area nil)
-          (setf near-home-list (cdr near-home-list)) ; remove 0 added before
-          (dolist (elt near-home-list)
-            ;; check if we have time
-            (let* ((elt-r (first elt))
-                   (elt-c (second elt))
-                   path)
-              (if (almost-time-up-p)
-                  (log-output "almont time up, cannot compute policy anymore~%")
-                (setf path (find-path (first elt) (second elt)
-                                      (nth 3 hill) (nth 4 hill)
-                                      (round (* search-area 0.6)))))
-              (log-output "path from (~a ~a) to (~a ~a) starts with ~a~%"
-                          elt-r elt-c (nth 3 hill)
-                          (nth 4 hill) (first path))
-              (if (null path)
-                  (set-value-at *policy-array* elt-r elt-c nil :none)
-                (set-value-at *policy-array* elt-r elt-c nil (first path))))))
-        (log-output "*policy-array* after setting up home area is:~%")
-        (log-output-array *policy-array* hill-r hill-c 10)))))
-
-
-(defun compute-furthest-points (search-area)
-  "Compute furthest points from own hills."
   (dolist (hill (hills *state*))
     (when (own-hill-p (first hill) (second hill)) ; :fixme: - optimize
-      (let* ((furthest-point (furthest-point-from (first hill)
-                                                  (second hill)
-                                                  search-area))
+      (compute-furthest-points hill (round (* 0.9 search-area)))
+
+      ;; mark area close to home
+      (let ((hill-r (first hill))
+            (hill-c (second hill)))
+        (bfs hill-r hill-c
+             (lambda (r c)
+               (set-value-at *policy-array* r c :none hill)
+               nil)
+             search-area)
+        (log-output-array *policy-array* hill-r hill-c
+                          (round (* 0.25 search-area)))))))
+
+
+(defun compute-furthest-points (hill search-area)
+  "Compute furthest points from hill. Return the furthest point."
+      (let* ((hill-r (first hill)) (hill-c (second hill))
+             (furthest-point (furthest-point-from hill-r hill-c search-area))
              (r (first furthest-point))
-             (c (second furthest-point)))
+             (c (second furthest-point))
+             (ret (if (and r c) (list r c) nil)))
         (when furthest-point
           (log-output "furthest point from (~a ~a) is (~a ~a) ~%"
-                      (first hill) (second hill) r c)
+                      hill-r hill-c r c)
           (setf (nth 3 hill) r)
-          (setf (nth 4 hill) c))))))
+          (setf (nth 4 hill) c))
+        ret))
 
 
-(defun move-near-home (r c hill)
+(defun move-near-home (r c hill near-home-area)
   "Move an ant near home (tricky)."
   (log-output "explore near home, from (~a ~a), hill=~a~%" r c hill)
-  ;; check local policy first
-  (let ((dir (value-at *policy-array* r c :none)))
-    (if (and dir (not (eql dir :none)) (move-acceptable-p r c dir))
-        (progn
-          (log-output "Local policy says the right direction is ~a~%" dir)
-          dir)
-      ;; Don't have a local policy - move independently.
-      (move-explore r c))))
+  ;; Move towards the furthest point or the usual way if no such point
+  ;; computed yet.
+  (if (nth 3 hill) ; we have a furthest point
+      (let ((path (find-path r c (nth 3 hill) (nth 4 hill)
+                             (* 0.6 near-home-area))))
+        (cond
+         ((and path (move-acceptable-p r c (first path)))
+          (log-output "Path from ant to furthest point is ~a~%" path)
+          (first path))
+         (t
+          (log-output "Cannot find path to furthest point.~%")
+          (move-explore r c))))
+    ;; else we don't have a furthest point - move the usual way
+    (move-explore r c)))
 
 
-(defun dfs (row col target-row target-col depth &key max-depth not-accesible-p
-            dir-list)
+(defun dfs (row col target-row target-col depth &key max-depth no-access-p
+            dir-list no-access-first-steps-p)
   "Depth-first search"
   ;;(log-output "dfs(~a ~a ~a)~%" row col depth) ; :tmp:
-  ;;(log-output "dfs visited-p=~a, not-accesible-p=~a~%"
-  ;;            (visited-p row col) (funcall not-accesible-p row col)) ; :tmp:
-  (when (or (and max-depth (> depth max-depth))
-            (visited-p row col)
-            (and not-accesible-p (funcall not-accesible-p row col)))
-    (return-from dfs))
+  ;;(log-output "dfs visited-p=~a, no-access-p=~a~%"
+  ;;            (visited-p row col) (funcall no-access-p row col)) ; :tmp:
+  (let ((no-access (if (and no-access-first-steps-p (> depth 0) (< depth 3))
+                       (funcall no-access-first-steps-p row col)
+                     (and no-access-p (funcall no-access-p row col)))))
+    (when (or (and max-depth (> depth max-depth))
+              (visited-p row col)
+              no-access)
+      (return-from dfs)))
   (mark-visited row col)
   (when (null dir-list)
     (setf dir-list (cond 
@@ -375,8 +362,9 @@ If func return non-nil value, the for-each-dir-do returns with that value."
                  (= new-c target-col))
         (return-from dfs (list dir)))
       (let ((rc (dfs new-r new-c target-row target-col (1+ depth)
-                     :max-depth max-depth :not-accesible-p not-accesible-p
-                     :dir-list dir-list)))
+                     :max-depth max-depth :no-access-p no-access-p
+                     :no-access-first-steps-p no-access-first-steps-p
+                     :dir-list dir-list )))
         (when rc
           (return-from dfs (cons dir rc)))))))
 
@@ -384,7 +372,11 @@ If func return non-nil value, the for-each-dir-do returns with that value."
 (defun find-path (row1 col1 row2 col2 &optional max-depth)
   "Find path from (row1, col1) to (row2, col2). Return a list with directions."
   (init-visited)
-  (dfs row1 col1 row2 col2 0 :max-depth max-depth :not-accesible-p 'waterp))
+  (dfs row1 col1 row2 col2 0 :max-depth max-depth
+       :no-access-p
+       (lambda (r c) (or (waterp r c) (own-hill-p r c)))
+       :no-access-first-steps-p
+       (lambda (r c) (or (waterp r c) (own-hill-p r c) (own-ant-p r c)))))
 
 
 (let (visited-array
@@ -458,7 +450,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
     (let ((r (first food))
           (c (second food)))
       (log-output "Trying to find ant for food at (~a ~a)~%" r c)
-      (let ((ret (bfs r c 'own-ant-p cells)))
+      (let ((ret (bfs r c 'own-free-ant-p cells)))
         (when ret
           (let ((ret-r (first ret)) (ret-c (second ret)))
             (log-output "Found an ant for food: (~a ~a)~%" ret-r ret-c)
@@ -477,7 +469,7 @@ If func return non-nil value, the for-each-dir-do returns with that value."
             (c (second hill)))
         (dotimes (i no-ants)
           (log-output "Trying to find ant for hill at (~a ~a)~%" r c)
-          (let ((ret (bfs r c 'own-ant-p (expt (* 2 steps) 2))))
+          (let ((ret (bfs r c 'own-free-ant-p (expt (* 2 steps) 2))))
             (when ret
               (let ((ret-r (first ret)) (ret-c (second ret)))
                 (log-output "Found an ant for hill: (~a ~a)~%" ret-r ret-c)

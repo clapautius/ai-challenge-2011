@@ -299,7 +299,8 @@
                               ((eql val :south) "s")
                               ((eql val :east) "e")
                               ((eql val :west) "w")
-                              ((eql val :none) "x"))
+                              ((eql val :none) "x")
+                              (t "."))
                             (cond
                               ((eql game-val 1) "*")
                               ((or (eql game-val 100) (eql game-val 101)) "#")
@@ -325,7 +326,7 @@
   (let ((food-cells-dist 30)
         (food-cells-path-len 10)
         (enemy-hill-steps 10)
-        (home-search-area 40))
+        (home-search-area 44))
 
     (target-enemy-hills enemy-hill-steps 2)
     (target-food food-cells-dist food-cells-path-len)
@@ -335,7 +336,7 @@
        for row = (elt ant 0)
        for col = (elt ant 1)
        until (almost-time-up-p)
-       do (do-ant row col))
+       do (do-ant row col home-search-area))
 
     (when (= *cur-turn* 16)
       (setup-home-area home-search-area))
