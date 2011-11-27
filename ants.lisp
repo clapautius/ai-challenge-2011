@@ -5,7 +5,9 @@
    (col :accessor col :initarg :col :initform nil)
 
    ;; (list task-type target-row target-col)
-   ;; :follow-food :attack-hill
+   ;; :follow-food :attack-hill :away-from-home
+   ;; :away-from-home is a pseudo-task, it's not a proper task, it means the ant
+   ;; is moving further away from own hill to avoid too many ants near home
    (task :accessor task :initform nil)
    (target-row :accessor target-row)
    (target-col :accessor target-col)
@@ -14,28 +16,36 @@
    (route :accessor route :initform nil)))
 
 
-(defgeneric move-ant (ant direction))
+(defmethod print-object ((ant ant) stream)
+  (format stream "<ANT:(~a ~a) t=~a>" (row ant) (col ant) (task ant)))
 
-(defmethod move-ant ((ant ant) direction)
+
+(defgeneric ant-move (ant direction))
+
+(defmethod ant-move ((ant ant) direction)
   "Move ant from the current position to the specified dir."
-  (move-ant-from-pos (row ant) (col ant) direction))
+  (ant-move-from-pos (row ant) (col ant) direction))
 
 
-(defun move-ant-from-pos (row col dir)
-  "Move ant from (row, col) to the specified dir."
-  (log-output "cmd ~a from (~a ~a), internal-state at dest: ~a~%"
-              dir row col *cur-turn*)
+(defun ant-move-from-pos (row col dir)
+  "Move ant from (row, col) to the specified dir. Does not check if move if
+  acceptable."
   (issue-order row col dir)
   (let* ((nl (new-location row col dir))
          (new-row (first nl))
          (new-col (second nl))
          (cur-ant (get-ant-at row col)))
+    (log-output "cmd ~a from (~a ~a) to (~a ~a), internal-state at dest: ~a~%"
+                dir row col new-row new-col *cur-turn*)
     (set-entity-at row col nil 0)
     (set-entity-at new-row new-col nil 100)
     (set-value-at *ant-map* row col nil nil)
     (set-value-at *ant-map* new-row new-col nil cur-ant)
-    (set-value-at *internal-state* row col dir *cur-turn*)))
-
+    (set-value-at *internal-state* row col dir *cur-turn*)
+    (setf (my-ants *state*)
+          (delete-if (lambda (elt) (and (= (row elt) (row cur-ant))
+                                        (= (col elt) (col cur-ant))))
+                     (my-ants *state*)))))
 
 
 (defun get-ant-at (row col &optional direction)
@@ -66,8 +76,10 @@ specified). If there's already an ant, it is overwriten."
   free, otherwise returns NIL."
   (let* ((nl (if direction (new-location row col direction) (list row col)))
          (r (first nl)) (c (second nl))
-         (elt (aref (game-map *state*) r c)))
-    (and (= 100 elt) (null (task (get-ant-at row col direction))))))
+         (elt (aref (game-map *state*) r c))
+         (ant (get-ant-at row col direction)))
+    (and (= 100 elt) (and ant (or (null (task ant))
+                                  (eql (task ant) :away-from-home))))))
 
 
 (defun remove-dead-ants (row col)
@@ -209,21 +221,49 @@ If func return non-nil value, the for-each-dir-do returns with that value."
         (return-from for-each-dir-do ret)))))
 
 
-(defun give-ant-a-task (ant row col task dir-list)
+(defun ant-give-a-task (ant row col task dir-list)
   "Give the ant a set of coords, a task and a list of directions.
-Calls move-ant()."
+Calls ant-move()."
   (cond
     (task
      (setf (target-row ant) row)
      (setf (target-col ant) col)
      (setf (task ant) task)
      (setf (task-wait ant) 0)
-     (setf (route ant) (cdr dir-list))
-     (move-ant ant (first dir-list)))
+     (setf (route ant) dir-list)
+     (ant-move-towards-target ant))
     (t
      (setf (task ant) nil)
      (setf (task-wait ant) 0)
      (setf (route ant) nil))))
+
+
+(defun ant-move-towards-target (ant)
+  "..."
+  (let ((r (row ant)) (c (col ant)))
+    (log-output "ant has a task: ~a~%" (task ant))
+    (cond
+     ;; ant reached its target
+     ((and (= r (target-row ant)) (= c (target-col ant)))
+      (log-output "ant has reached its target~%")
+      (ant-give-a-task ant 0 0 nil nil))
+     ;; move ahead
+     (t
+      (if (move-acceptable-p r c (first (route ant)))
+          ;; the move is acceptable
+          (progn
+            (log-output "move according to route, dir=~a~%"
+                        (first (route ant)))
+            (setf (task-wait ant) 0)
+            (ant-move-from-pos r c (first (route ant)))
+            (setf (route ant) (cdr (route ant))))
+        ;; the move is not acceptable
+        (progn
+          (log-output "cannot move according to route~%")
+          (incf (task-wait ant))
+          (when (> (task-wait ant) 3)
+            (log-output "waited too long, aborting task")
+            (ant-give-a-task ant 0 0 nil nil))))))))
 
 
 (defun do-ant (ant near-home-area)
@@ -231,38 +271,20 @@ Calls move-ant()."
   (let ((r (row ant)) (c (col ant)))
   (log-output "doing something with ant at (~a ~a)~%" r c)
   (when (task ant)
-    (log-output "ant has a task: ~a~%" (task ant))
-    (cond
-      ;; ant reached its target
-      ((and (= r (target-row ant)) (= c (target-col ant)))
-       (log-output "ant has reached its target~%")
-       (give-ant-a-task ant 0 0 nil nil))
-      ;; move ahead
-      (t
-       (if (move-acceptable-p r c (first (route ant)))
-           ;; the move is acceptable
-           (progn
-             (log-output "move according to route, dir=~a~%"
-                         (first (route ant)))
-             (setf (task-wait ant) 0)
-             (move-ant-from-pos r c (first (route ant)))
-             (setf (route ant) (cdr (route ant))))
-           ;; the move is not acceptable
-           (progn
-             (log-output "cannot move according to route~%")
-             (incf (task-wait ant))
-             (when (> (task-wait ant) 3)
-               (log-output "waited too long, aborting task")
-               (give-ant-a-task ant 0 0 nil nil)))))))
+    (ant-move-towards-target ant))
 
   ;; no task assigned to ant
   (when (null (task ant))
     (let* ((near-home (nearest-own-hill r c))
-           (dir (if near-home
-                    (move-near-home r c near-home near-home-area)
-                    (move-explore r c))))
+           (explore t)
+           dir)
+      (when near-home
+        (when (move-near-home ant near-home near-home-area)
+          (setf explore nil))) ; found a strategy - don't explore
+      (when explore
+        (setf dir (move-explore r c)))
       (if dir
-          (move-ant-from-pos r c dir)
+          (ant-move-from-pos r c dir)
           (set-value-at *internal-state* r c dir *cur-turn*))))))
 
 
@@ -329,7 +351,8 @@ Calls move-ant()."
   "Return true if the move is acceptable"
   (let ((ent (get-entity-at row col dir)))
     (and (/= 1 ent) ; not water
-         ;(not (own-hill-p row col dir)) ; not own hill
+         (/= 300 ent) ; not own hill
+         (/= 100 ent) ; not own ant
          (/= (value-at *internal-state* row col dir) *cur-turn*))))
   
 
@@ -367,7 +390,9 @@ Calls move-ant()."
 (defun setup-home-area (search-area)
   "Compute furthest points, setup local policy around home."
   (log-output "setting up home area (search area=~a)~%" search-area)
+  (log-output "hills=~a~%" (hills *state*)) ; :tmp:
   (dolist (hill (hills *state*))
+    (log-output-array (game-map *state*) (first hill) (second hill) 5) ; :tmp:
     (when (own-hill-p (first hill) (second hill)) ; :fixme: - optimize
       (compute-furthest-points hill (round (* 0.9 search-area)))
 
@@ -390,31 +415,34 @@ Calls move-ant()."
              (r (first furthest-point))
              (c (second furthest-point))
              (ret (if (and r c) (list r c) nil)))
-        (when furthest-point
-          (log-output "furthest point from (~a ~a) is (~a ~a) ~%"
-                      hill-r hill-c r c)
-          (setf (nth 3 hill) r)
-          (setf (nth 4 hill) c))
+        (if furthest-point
+            (progn
+              (log-output "furthest point from (~a ~a) is (~a ~a) ~%"
+                          hill-r hill-c r c)
+              (setf (nth 3 hill) r)
+              (setf (nth 4 hill) c))
+          (log-output "could not compute furthest point prom (~a ~a)~%"
+                      hill-r hill-c))
         ret))
 
 
-(defun move-near-home (r c hill near-home-area)
-  "Move an ant near home (tricky)."
-  (log-output "explore near home, from (~a ~a), hill=~a~%" r c hill)
+(defun move-near-home (ant hill near-home-area)
+  "Move an ant near home (tricky). Return nil if it can't find a strategy."
+  (log-output "explore near home, from (~a ~a), hill=~a~%"
+              (row ant) (col ant) hill)
   ;; Move towards the furthest point or the usual way if no such point
   ;; computed yet.
-  (if (nth 3 hill) ; we have a furthest point
-      (let ((path (find-path r c (nth 3 hill) (nth 4 hill)
+  (when (nth 3 hill) ; we have a furthest point
+      (let ((path (find-path (row ant) (col ant) (nth 3 hill) (nth 4 hill)
                              (* 0.6 near-home-area))))
         (cond
-         ((and path (move-acceptable-p r c (first path)))
+         (path
           (log-output "Path from ant to furthest point is ~a~%" path)
-          (first path))
+          (ant-give-a-task ant (nth 3 hill) (nth 4 hill) :away-from-home path)
+          t) ; return t - we have a strategy
          (t
           (log-output "Cannot find path to furthest point.~%")
-          (move-explore r c))))
-    ;; else we don't have a furthest point - move the usual way
-    (move-explore r c)))
+          nil))))) ; return nil - we don't have a strategy
 
 
 (defun dfs (row col target-row target-col depth &key max-depth no-access-p
@@ -564,7 +592,7 @@ Calls move-ant()."
               (let ((path (find-path ret-r ret-c r c path-len)))
                 (when path
                   (log-output "Path from ant to food is ~a~%" path)
-                  (give-ant-a-task (get-ant-at ret-r ret-c) r c
+                  (ant-give-a-task (get-ant-at ret-r ret-c) r c
                                    :follow-food path))))))))))
 
 
@@ -586,5 +614,5 @@ Calls move-ant()."
                 (let ((path (find-path ret-r ret-c r c (* 3 steps))))
                   (when path
                     (log-output "Path from ant to hill is ~a~%" path)
-                    (give-ant-a-task (get-ant-at ret-r ret-c) r c
+                    (ant-give-a-task (get-ant-at ret-r ret-c) r c
                                      :follow-hill path)))))))))))

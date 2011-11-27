@@ -14,7 +14,7 @@
    (game-map :accessor game-map :initform nil)
 
    (enemy-ants :reader enemy-ants :initform nil)
-   (my-ants :reader my-ants :initform nil)
+   (my-ants :accessor my-ants :initform nil)
 
    ;; (list row col)
    (food :reader food :initform nil)
@@ -142,9 +142,19 @@
          (owner (parse-integer (elt split 3))))
     (if (= owner 0)
         ;; my ant
-        (let ((new-ant (make-instance 'ant :row row :col col)))
-          (push new-ant (slot-value *state* 'my-ants))
-          (setf (aref *ant-map* row col) new-ant))
+        (if (aref *ant-map* row col)
+            (let ((old-ant (get-ant-at row col)))
+              ;; ant is older
+              (log-output "adding older ant ~a to list~%" old-ant) ; :tmp:
+              ;; update coords.
+              (setf (row old-ant) row)
+              (setf (col old-ant) col)
+              (push old-ant (slot-value *state* 'my-ants)))
+            ;; a new ant is bord
+            (let ((new-ant (make-instance 'ant :row row :col col)))
+              (log-output "a new ant is born: ~a~%" new-ant) ; :tmp:
+              (push new-ant (slot-value *state* 'my-ants))
+              (setf (aref *ant-map* row col) new-ant)))
         (push (list row col owner) (slot-value *state* 'enemy-ants)))
     (setf (aref (game-map *state*) row col) (+ owner 100))))
 
@@ -298,14 +308,19 @@
   (when *log-output*
     (log-output "printing array from (~a ~a) to (~a ~a)~%"
                 (- row len) (- col len) (+ row len) (+ col len))
+    (log-output "   >")
+    (loop for j from (- col len) to (+ col len)
+          do (log-output "~2a|" j))
+    (log-output "~%")
     (loop for i from (- row len) to (+ row len) do
+         (log-output "~3d>" i)
          (loop for j from (- col len) to (+ col len)
               do 
               (let* ((nl (normalize-loc i j))
                      (val (value-at array (first nl) (second nl) :none))
                      (game-val (value-at (game-map *state*)
                                          (first nl) (second nl) :none)))
-                (log-output "~a~a| "
+                (log-output "~a~a|"
                             (cond
                               ((null val) " ")
                               ((eql val :north) "n")
@@ -316,7 +331,9 @@
                               (t "."))
                             (cond
                               ((eql game-val 1) "*")
-                              ((or (eql game-val 100) (eql game-val 101)) "#")
+                              ((eql game-val 100) "#")
+                              ((eql game-val 300) "H")
+                              ((and (> game-val 300) (<= game-val 399)) "H")
                               (t " ")))))
          (log-output "~%"))))
 
