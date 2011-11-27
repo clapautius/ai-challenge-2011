@@ -81,9 +81,11 @@
                                         (0 0 0 0 0 0 0 0) ; r 5
                                         (0 0 0 0 0 0 0 0)
                                         (0 0 0 0 0 0 0 0))))
+  (setf (slot-value *state* 'turn-start-time) (wall-time))
+  (reset-some-state)
+  (init-internal-data (rows *state*) (cols *state*))
   (set-food "f 5 3")
   (set-ant "a 4 4 0");
-  (init-internal-data (rows *state*) (cols *state*))
 
   ;; test furthest point
   (format t "furthest point from (0 0) with max-search 16 is ~a~%"

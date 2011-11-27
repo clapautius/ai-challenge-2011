@@ -322,7 +322,7 @@
 
 
 (defun almost-time-up-p ()
-
+  "Return true if the remaining time is less than 5% of total time."
   (<= (turn-time-remaining) (turn-time-5-pc *state*)))
 
 
