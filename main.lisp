@@ -1,7 +1,7 @@
 ;;;; main.lisp
 
 ;;; :release:
-(defparameter *debug* nil)
+(defparameter *debug* t)
 
 (load "bot.lisp")
 (load "ants.lisp")

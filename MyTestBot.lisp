@@ -21,33 +21,6 @@
 
 ;;;; Tests
 
-(defun test-dfs ()
-  "Run tests for depth-first search."
-  (setf (rows *state*) 3)
-  (setf (cols *state*) 3)
-  (setf (game-map *state*) (make-array (list 3 3)
-                                       :initial-contents
-                                       '((0 0 0)
-                                         (0 0 0)
-                                         (0 0 0))))
-  (format t "arr1=~a~%test1=~a~%" (game-map *state*) (find-path 0 0 2 2))
- 
-  (setf (game-map *state*) (make-array (list 3 3)
-                                       :initial-contents
-                                       '((0 1 0)
-                                         (0 1 0)
-                                         (0 0 0))))
-  (format t "arr2=~a~%test2=~a~%" (game-map *state*) (find-path 0 0 2 2))
-
-  (setf (game-map *state*) (make-array (list 3 3)
-                                       :initial-contents
-                                       '((0 1 0)
-                                         (0 0 0)
-                                         (0 1 0))))
-  (format t "arr3=~a~%test3=~a~%" (game-map *state*) (find-path 0 0 2 2))
-  )
-
-
 (defun test-bfs ()
   "Run tests for breadth-first search."
   (setf (rows *state*) 3)
@@ -59,6 +32,24 @@
                                          (0 0 100))))
   (let ((ret (bfs 0 0 'own-ant-p)))
     (format t "test1: bfs=(~a, ~a)~%" (first ret) (second ret)))
+  ;; limit search size
+  (let ((ret (bfs 0 0 'own-ant-p 5)))
+    (format t "test2: bfs=(~a, ~a)~%" (first ret) (second ret)))
+
+  )
+
+
+(defun test-bfs-path ()
+  "Run tests for breadth-first search with path finding."
+  (setf (rows *state*) 3)
+  (setf (cols *state*) 3)
+  (setf (game-map *state*) (make-array (list 3 3)
+                                       :initial-contents
+                                       '((0 0 0)
+                                         (0 0 0)
+                                         (0 0 100))))
+  (let ((ret (bfs-path 0 0 'own-ant-p)))
+    (format t "test1: bfs-path=~a~%" ret))
   ;; limit search size
   (let ((ret (bfs 0 0 'own-ant-p 5)))
     (format t "test2: bfs=(~a, ~a)~%" (first ret) (second ret)))

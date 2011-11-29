@@ -353,14 +353,13 @@
 
 ;; This is the actual 'AI' function.
 (defun do-turn ()
-  (let ((food-cells-dist 30)
-        (food-cells-path-len 10)
-        (enemy-hill-steps 10)
-        (home-search-area 44))
+  (let ((food-cells-search-area 30)
+        (enemy-hill-area 84)
+        (home-search-area 42))
 
     ;(target-enemy-hills enemy-hill-steps 2)
-    (target-enemy-hills enemy-hill-steps)
-    (target-food food-cells-dist food-cells-path-len)
+    (target-enemy-hills enemy-hill-area)
+    (target-food food-cells-search-area)
 
     (loop
        for ant in (my-ants *state*)
