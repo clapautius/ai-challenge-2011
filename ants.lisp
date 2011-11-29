@@ -82,8 +82,12 @@ specified). If there's already an ant, it is overwriten."
                                   (eql (task ant) :away-from-home))))))
 
 
-(defun remove-dead-ants (row col)
-  "Remove own dead ants from lists and maps."
+(defun remove-dead-ant (row col)
+  "Remove own dead ant from lists and maps."
+  (let ((dying-ant (get-ant-at row col)))
+    (when (eql (task dying-ant) :follow-hill)
+      (log-output "attacking ant at (~a ~a) died~%" row col)
+      (decf (attack-ants *state*))))
   (set-ant-at row col nil)
   (remove-if (lambda (ant) (and (= (row ant) row)
                                 (= (col ant) col)))
@@ -179,7 +183,7 @@ better)."
          (p (cond
               ((= e 1) (1- *cur-turn*)) ; water
               ((own-hill-p r c) (* 2 *cur-turn*)) ; own hill
-              ((enemy-hill-p r c) (- *cur-turn*)) ; enemy hill - destroy
+              ;((enemy-hill-p r c) (- *cur-turn*)) ; enemy hill - destroy
               ((= e 200) (1+ *cur-turn*)) ; enemy ant - run, forrest, run
               ;((= e 100) (1+ *cur-turn*)) ; own ant
               ((= e 2) (- *cur-turn*)) ; food
@@ -231,7 +235,9 @@ Calls ant-move()."
      (setf (task ant) task)
      (setf (task-wait ant) 0)
      (setf (route ant) dir-list)
-     (ant-move-towards-target ant))
+     (ant-move-towards-target ant)
+     (when (eql task :follow-hill)
+       (incf (attack-ants *state*))))
     (t
      (setf (task ant) nil)
      (setf (task-wait ant) 0)
@@ -246,6 +252,19 @@ Calls ant-move()."
      ;; ant reached its target
      ((and (= r (target-row ant)) (= c (target-col ant)))
       (log-output "ant has reached its target~%")
+      (when (eql (task ant) :follow-hill)
+        ;; remove enemy hill from list
+        (setf (hills *state*) (delete-if (lambda (hill)
+                                           (and (= r (first hill))
+                                                (= c (second hill))))
+                                         (hills *state*)))
+        ;; clear task for other ants targeting the same hill
+        (mapc (lambda (a)
+                (when (and (eql (task a) :follow-hill)
+                           (= (target-row a) r)
+                           (= (target-col a) c))
+                  (ant-give-a-task a 0 0 nil nil)))
+              (my-ants *state*)))
       (ant-give-a-task ant 0 0 nil nil))
      ;; move ahead
      (t
@@ -270,7 +289,7 @@ Calls ant-move()."
              (ant-give-a-task ant 0 0 nil nil)))))))))
 
 
-(defun do-ant (ant near-home-area)
+(defun do-ant (ant)
   "Do something with ant at coord. (r, c)."
   (let ((r (row ant)) (c (col ant)))
   (log-output "doing something with ant at (~a ~a)~%" r c)
@@ -279,12 +298,12 @@ Calls ant-move()."
 
   ;; no task assigned to ant
   (when (null (task ant))
-    (let* ((near-home (nearest-own-hill r c))
+    (let* (;(near-home (nearest-own-hill r c))
            (explore t)
            dir)
-      (when near-home
-        (when (move-near-home ant near-home near-home-area)
-          (setf explore nil))) ; found a strategy - don't explore
+      ;;(when near-home
+        ;;(when (move-near-home ant near-home near-home-area)
+          ;;(setf explore nil))) ; found a strategy - don't explore
       (when explore
         (setf dir (move-explore r c)))
       (if dir
@@ -344,6 +363,7 @@ Calls ant-move()."
                    (setf last-selected-c c)
                    nil)  ; return nil to continue search
          search-area t)
+    (log-output "furthest-point-from=(~a ~a)~%" last-selected-r last-selected-c)
     (list last-selected-r last-selected-c)))
 
 
@@ -363,7 +383,7 @@ Calls ant-move()."
 
 (defun move-explore (r c)
   "Select a cell that was not visited before or was visited a long time ago"
-  (log-output "explore from (~a ~a), *cur-turn*=~a~%" r c *cur-turn*)
+  (log-output "explore from (~a ~a)~%" r c)
   ;; :tmp:
   ;;(log-output "map:~%~a~%internal-state:~%~a~%"
   ;;        (game-map *state*)
@@ -395,6 +415,7 @@ Calls ant-move()."
 (defun setup-home-area (search-area)
   "Compute furthest points, setup local policy around home."
   (log-output "setting up home area (search area=~a)~%" search-area)
+  (setf (slot-value *state* 'near-home-area) search-area)
   ;(log-output "hills=~a~%" (hills *state*)) ; :tmp:
   (dolist (hill (hills *state*))
     ;(log-output-array (game-map *state*) (first hill) (second hill) 5) ; :tmp:
@@ -505,9 +526,11 @@ Calls ant-move()."
       (when (funcall target-p elt-row elt-col)
         (return-from bfs (list elt-row elt-col)))
       (setf frontier (cdr frontier))
-      ;;(log-output "bfs: remove (~a ~a) from frontier~%" elt-row elt-col);:tmp:
+      ;; :tmp:
+      ;;(log-output "bfs: remove (~a ~a) from frontier~%" elt-row elt-col)
       (incf search-size)
-      (when (or (null avoid-water)
+      (when (or (<= search-size 1) ; don't check first cell
+                (null avoid-water)
                 (and avoid-water
                      (not (waterp elt-row elt-col :north))
                      (not (waterp elt-row elt-col :south))
@@ -545,8 +568,10 @@ Return path to target (list of directions) or nil if no such path exists."
       ;; :tmp:
       ;;(log-output "bfs-path: remove ~a from frontier~%" elt)
       (incf search-size)
-      (when (or (null acceptable-p)
-                (and acceptable-p (funcall acceptable-p cur-row cur-col)))
+      (when (or (<= search-size 1) ; first cell is always acceptable
+                (null acceptable-p)
+                (and acceptable-p
+                     (funcall acceptable-p cur-row cur-col)))
         (dolist (dir '(:north :south :east :west))
           (let* ((nl (new-location cur-row cur-col dir))
                  (new-row (first nl))
@@ -570,6 +595,16 @@ Return path to target (list of directions) or nil if no such path exists."
                (= (target-col ant) col)))
         (my-ants *state*)))
 
+
+(defun no-ants-targeting-cell (row col task)
+  "Return number of ants going towards the specified cell with the
+  specified task."
+  (count-if (lambda (ant)
+              (and (eql (task ant) task)
+                   (= (target-row ant) row)
+                   (= (target-col ant) col)))
+            (my-ants *state*)))
+
   
 (defun target-food (cells)
   "Find ants close to food. Move ants towards food."
@@ -592,15 +627,15 @@ Return path to target (list of directions) or nil if no such path exists."
 
 
 ;(defun target-enemy-hills (steps &optional (no-ants 1))
-(defun target-enemy-hills (area)
+(defun target-enemy-hills (area ants-per-hill)
   "Find ants close to enemy hill. Move ants towards enemy hill."
   (log-output "Targeting enemy hills~%")
   (dolist (hill (hills *state*))
     (when (/= (third hill) 0) ; enemy hill
       (let ((r (first hill))
             (c (second hill)))
-        ;; check if there's an ant trying to get to this hill
-        (unless (ant-targeting-cell-p r c :follow-hill)
+        ;; check no. of ants trying to get to this hill
+        (when (< (no-ants-targeting-cell r c :follow-hill) ants-per-hill)
           (log-output "Trying to find ant for hill at (~a ~a)~%" r c)
           (let ((ret (bfs r c 'own-free-ant-p area)))
             (when ret

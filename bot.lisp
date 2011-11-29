@@ -20,7 +20,7 @@
    (food :reader food :initform nil)
 
    ;; (list row col owner furthest-r furthest-c)
-   (hills :reader hills :initform nil)
+   (hills :accessor hills :initform nil)
 
    ;; ms
    (turn-time :reader turn-time :initform 1000)
@@ -32,7 +32,12 @@
    (attack-radius2  :reader attack-radius2 :initform 6)
    (spawn-radius2 :reader spawn-radius2 :initform 6)
    (turns :reader turns :initform nil)
-   (turn :reader turn :initform nil)))
+   (turn :reader turn :initform nil)
+
+   (near-home-area :reader near-home-area :initform 5)
+
+   (total-ants :accessor total-ants :initform 0)
+   (attack-ants :accessor attack-ants :initform 0)))
 
 ;;; Globals
 
@@ -154,7 +159,11 @@
             (let ((new-ant (make-instance 'ant :row row :col col)))
               ;(log-output "a new ant is born: ~a~%" new-ant) ; :tmp:
               (push new-ant (slot-value *state* 'my-ants))
-              (setf (aref *ant-map* row col) new-ant)))
+              (setf (aref *ant-map* row col) new-ant)
+              ;; give the ant a first task - to move away from home
+              (when (plusp (near-home-area *state*))
+                (move-near-home new-ant (nearest-own-hill row col)
+                                (near-home-area *state*)))))
         (push (list row col owner) (slot-value *state* 'enemy-ants)))
     (setf (aref (game-map *state*) row col) (+ owner 100))))
 
@@ -169,7 +178,7 @@
     (unless (= 2 (aref (game-map *state*) row col))
       (setf (aref (game-map *state*) row col) (+ owner 200)))
     (when (= 0 owner)
-      (remove-dead-ants row col))))
+      (remove-dead-ant row col))))
 
 
 (defun set-food (string)
@@ -218,6 +227,7 @@
                  ((starts-with line "a ") (set-ant line))
                  ((starts-with line "d ") (set-dead line))
                  ((starts-with line "h ") (set-hill line))))
+  (setf (total-ants *state*) (length (my-ants *state*)))
   ;; print turn data
   (log-output "hills for current turn: ~a~%" (hills *state*))
   (log-output "own ants for current turn: ~a~%" (my-ants *state*))
@@ -298,7 +308,7 @@
   "Print the output to *log-output* stream, if not nil."
   (when *log-output*
     (apply 'format *log-output* params)
-    ;(log-output-finish) ;; :tmp:
+    ;;(log-output-finish) ;; :tmp:
     ))
 
 
@@ -358,13 +368,13 @@
         (home-search-area 42))
 
     ;(target-enemy-hills enemy-hill-steps 2)
-    (target-enemy-hills enemy-hill-area)
+    (target-enemy-hills enemy-hill-area (round (/ (total-ants *state*) 10)))
     (target-food food-cells-search-area)
 
     (loop
        for ant in (my-ants *state*)
        until (almost-time-up-p)
-       do (do-ant ant home-search-area))
+       do (do-ant ant))
 
     (when (= *cur-turn* 16)
       (setup-home-area home-search-area))
