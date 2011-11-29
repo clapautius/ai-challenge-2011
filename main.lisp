@@ -1,7 +1,6 @@
 ;;;; main.lisp
 
-;;; :release:
-(defparameter *debug* nil)
+(defparameter *debug* nil) ; :release:
 
 (load "bot.lisp")
 (load "ants.lisp")
@@ -15,8 +14,8 @@
     (setf *log-output* (open "output.log" :direction :output :if-exists :append
                              :if-does-not-exist :create))
     (setf *log-output* nil))
-  (log-output "I'm alive~%")
-  (log-output-finish)
+  (logd "I'm alive~%")
+  (logd-finish)
   (handler-bind ((sb-sys:interactive-interrupt #'user-interrupt))
     (loop while (handler-case (peek-char nil *standard-input* nil)
                   (sb-int:simple-stream-error nil))

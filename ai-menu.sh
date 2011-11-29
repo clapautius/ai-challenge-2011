@@ -19,16 +19,25 @@ while /bin/true; do
         2_1 ".../maze_02p_01.map (del log)" \
         5_1 ".../random_walk_05p_01.map (del log)" \
         d "compile with debug" \
+        t "run test" \
         3>&1 1>&2 2>&3 3>&-)
     #echo "opt=$opt"
     #wait_key
 
+    no=0 # default value
     if [ "$opt"_ = "c"_ ]; then
         sbcl --script MyBot.lisp
-        no=0
     elif [ "$opt"_ = "d"_ ]; then
         sbcl --load MyBot.lisp
-        no=0
+    elif [ "$opt"_ = "t"_ ]; then
+        rm -f "$CUR_DIR/output.log"
+        pushd "$TOOLS_DIR"
+        ./test_bot.sh  "$CUR_DIR/MyBot"
+        if [ -e "$CUR_DIR/output.log" ]; then
+            echo -e "\n\nWARNING! Log enabled !\n\n"
+        else
+            echo "No log. Good."
+        fi
     elif [ "$opt"_ = "4_1"_ ]; then
         map="maps/maze/maze_04p_01.map"
         no=4

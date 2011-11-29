@@ -4,14 +4,14 @@
 
 ;; This seems to work for now.
 
-;; :release:
-(declaim (sb-ext:muffle-conditions sb-ext:compiler-note))
+;(declaim (optimize debug)) ; :release:
+
+(declaim (sb-ext:muffle-conditions sb-ext:compiler-note)) ; :release:
 
 ;(declaim (sb-ext:muffle-conditions style-warning))  ; doesn't work
 ;(declaim (sb-ext:muffle-conditions warning))        ; idem
 
-;; :release:
-(setf sb-ext:*muffled-warnings* 'style-warning)
+(setf sb-ext:*muffled-warnings* 'style-warning) ; :release:
 
 (load "main.lisp")
 (save-lisp-and-die "MyBot" :toplevel #'main :executable t)

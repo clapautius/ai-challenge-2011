@@ -150,14 +150,14 @@
         (if (aref *ant-map* row col)
             (let ((old-ant (get-ant-at row col)))
               ;; ant is older
-              ;(log-output "adding older ant ~a to list~%" old-ant) ; :tmp:
+              ;(logd "adding older ant ~a to list~%" old-ant) ; :tmp:
               ;; update coords.
               (setf (row old-ant) row)
               (setf (col old-ant) col)
               (push old-ant (slot-value *state* 'my-ants)))
             ;; a new ant is bord
             (let ((new-ant (make-instance 'ant :row row :col col)))
-              ;(log-output "a new ant is born: ~a~%" new-ant) ; :tmp:
+              ;(logd "a new ant is born: ~a~%" new-ant) ; :tmp:
               (push new-ant (slot-value *state* 'my-ants))
               (setf (aref *ant-map* row col) new-ant)
               ;; give the ant a first task - to move away from home
@@ -229,9 +229,9 @@
                  ((starts-with line "h ") (set-hill line))))
   (setf (total-ants *state*) (length (my-ants *state*)))
   ;; print turn data
-  (log-output "hills for current turn: ~a~%" (hills *state*))
-  (log-output "own ants for current turn: ~a~%" (my-ants *state*))
-  (log-output "food for current turn: ~a~%" (food *state*)))
+  (logd "hills for current turn: ~a~%" (hills *state*))
+  (logd "own ants for current turn: ~a~%" (my-ants *state*))
+  (logd "food for current turn: ~a~%" (food *state*)))
 
 
 (defun reset-some-state ()
@@ -252,9 +252,9 @@
   ;; set the 5% value
   (setf (slot-value *state* 'turn-time-5-pc)
         (round (/ (* (turn-time *state*) 5) 100)))
-  (log-output "Turn time: ~a, turn time 5 pc: ~a~%"
+  (logd "Turn time: ~a, turn time 5 pc: ~a~%"
               (turn-time *state*) (turn-time-5-pc *state*))
-  (log-output "Rows: ~a, cols: ~a~%" rows cols))
+  (logd "Rows: ~a, cols: ~a~%" rows cols))
 
 
 (let ((time-units (/ 1.0 internal-time-units-per-second)))
@@ -298,54 +298,54 @@
   (quit))
 
 
-(defun log-output-finish ()
+(defun logd-finish ()
   "Flush *log-output*"
   (when *log-output*
     (finish-output *log-output*)))
 
 
-(defun log-output (&rest params)
+(defun logd (&rest params)
   "Print the output to *log-output* stream, if not nil."
   (when *log-output*
     (apply 'format *log-output* params)
-    ;;(log-output-finish) ;; :tmp:
+    ;;(logd-finish) ; :release:
     ))
 
 
-(defun log-output-array (array row col len)
+(defun logd-array (array row col len)
   "Print a matrix containing elements from (row-len, col-len) to
    (row+len, col+len)"
   (when *log-output*
-    (log-output "printing array from (~a ~a) to (~a ~a)~%"
-                (- row len) (- col len) (+ row len) (+ col len))
-    (log-output "   >")
+    (logd "printing array from (~a ~a) to (~a ~a)~%"
+          (- row len) (- col len) (+ row len) (+ col len))
+    (logd "   >")
     (loop for j from (- col len) to (+ col len)
-          do (log-output "~2a|" j))
-    (log-output "~%")
+          do (logd "~2a|" j))
+    (logd "~%")
     (loop for i from (- row len) to (+ row len) do
-         (log-output "~3d>" i)
+         (logd "~3d>" i)
          (loop for j from (- col len) to (+ col len)
               do 
               (let* ((nl (normalize-loc i j))
                      (val (value-at array (first nl) (second nl) :none))
                      (game-val (value-at (game-map *state*)
                                          (first nl) (second nl) :none)))
-                (log-output "~a~a|"
-                            (cond
-                              ((null val) " ")
-                              ((eql val :north) "n")
-                              ((eql val :south) "s")
-                              ((eql val :east) "e")
-                              ((eql val :west) "w")
-                              ((eql val :none) "x")
-                              (t "."))
-                            (cond
-                              ((eql game-val 1) "*")
-                              ((eql game-val 100) "#")
-                              ((eql game-val 300) "H")
-                              ((and (> game-val 300) (<= game-val 399)) "H")
-                              (t " ")))))
-         (log-output "~%"))))
+                (logd "~a~a|"
+                     (cond
+                       ((null val) " ")
+                       ((eql val :north) "n")
+                       ((eql val :south) "s")
+                       ((eql val :east) "e")
+                       ((eql val :west) "w")
+                       ((eql val :none) "x")
+                       (t "."))
+                     (cond
+                       ((eql game-val 1) "*")
+                       ((eql game-val 100) "#")
+                       ((eql game-val 300) "H")
+                       ((and (> game-val 300) (<= game-val 399)) "H")
+                       (t " ")))))
+         (logd "~%"))))
 
 
 (defun almost-time-up-p ()
@@ -363,8 +363,8 @@
 
 ;; This is the actual 'AI' function.
 (defun do-turn ()
-  (let ((food-cells-search-area 30)
-        (enemy-hill-area 84)
+  (let ((food-cells-search-area 70)
+        (enemy-hill-area 140)
         (home-search-area 42))
 
     ;(target-enemy-hills enemy-hill-steps 2)
@@ -380,8 +380,9 @@
       (setup-home-area home-search-area))
 
     (incf *cur-turn*)
-    (if (almost-time-up-p)
-        (log-output "Time remaining: ~a - almost time up !!~%"
-                    (turn-time-remaining))
-        (log-output "Time remaining: ~a~%" (turn-time-remaining)))
-    (log-output-finish)))
+    (logd "Time remaining: ~a~%" (turn-time-remaining))
+    (when (almost-time-up-p)
+      (logd "Almost time up !!~%")
+      (decf enemy-hill-area 5)
+      (decf food-cells-search-area 5))
+    (logd-finish)))
